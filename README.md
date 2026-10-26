@@ -302,6 +302,14 @@ Mode B only adds constraints to Mode A, so $`Z^{\ast}_B \le Z^{\ast}_A`$. A tigh
 
 This is an upper bound on how far a time-limited Mode B solution can be from optimal. Separately, report $`Z^{\ast}_A - Z^{\ast}_B`$ as the **cost of minimum orders**.
 
+**How Mode B is actually solved.** At full size (about 13–26 thousand edges per round), CBC cannot find any integer solution to the full MILP within a minute. The code therefore solves each round in four steps:
+1. Solve the LP relaxation of the **full** Mode B model. Its value is $`Z^{LP}_B`$, the bound above.
+2. Build a valid allocation greedily: go through edges from highest to lowest $`w_{ij}`$, and give each one the largest shipment that keeps (1)–(5).
+3. Keep a **candidate** set of edges: the LP solution's support, the greedy solution's support, and each requester's top-$`k`$ edges by $`w_{ij}`$ (default $`k = 10`$). Solve the MILP on the candidates only, warm-started from the greedy allocation, stopping at a 0.5% relative gap or 30 seconds.
+4. If the solver returns nothing valid or anything worse than greedy, use the greedy allocation.
+
+Step 3 is a heuristic, since an optimal solution could use an edge outside the candidate set. But $`\text{gap}_\tau`$ is always measured against the bound from step 1, which covers the full edge set, so it certifies the quality of whatever answer is returned. On the placeholder data, the gap is below 0.5% in every round, compared with 4–5% for the greedy allocation alone. Setting `candidate_k = 0` keeps every edge and solves the exact model, which is fine for small instances.
+
 ### 7.6 Shield-Net is a special case
 Set:
 - $`\hat\psi \equiv 1`$ with `learn_psi` False, and $`W = (1,2,3)`$
@@ -331,6 +339,12 @@ Run these in order.
 
 - **Allocation:** units allocated $`\sum x^{\ast}`$; expected delivered $`\sum \hat\psi x^{\ast}`$; realised delivered $`\sum \delta`$.
 - **Fill rates:** realised fill overall and by urgency level; fill of non-flagged level-3 requesters (the group the cap protects).
+
+**Run-level fill definitions** (in `summary.json` and the experiment CSVs):
+- **Fill** always means realised deliveries divided by units requested ($`D^0_j`$), summed over requesters.
+- **Bulk requesters are reported separately** (`fill_bulk`). A single bulk request can be the size of a whole round's supply, so including it would swamp every other number. `fill_nonbulk`, `fill_L1`–`fill_L3` and `wfill_ref` exclude bulk requesters.
+- `wfill_ref` weights each requester by fixed **reference** weights (1, 10, 100) for levels 1/2/3, whatever $`W`$ the run used, so runs with different $`W`$ remain comparable.
+- `exp_fill_overall` replaces each match's random outcome with its true success probability, $`\sum \psi^{\ast} x / \sum D^0`$. It measures the same thing as `fill_overall` but without the luck of the draws, so it varies much less across seeds. Because failed demand is re-matched in later rounds, it can sit above or below the realised fill for any single seed.
 - **Supply:** $`A^{tot}_\tau`$; aggregate supply/demand ratio $`A^{tot}_\tau / \sum_j D_{j,\tau}`$; utilisation $`\sum x^{\ast} / A^{tot}`$; leaked stock; stock lost to the storage cap.
 - **Geography:** share of same-state matches, share of same-district matches, mean and median road distance.
 - **Price and quality:** mean unit price paid; share of certified units overall and to $`\kappa = 1`$ requesters.
@@ -427,7 +441,7 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
 **Value of learning.** Set the true $`\psi^{\ast}_{cross} \in \lbrace 0.08, 0.16, 0.25\rbrace`$ and $`\psi^{\ast}_{same} \in \lbrace 0.30, 0.40, 0.55\rbrace`$, so the prior is right or wrong in either direction. Compare `learn_psi` on vs off on realised fill, and track how fast $`\hat\psi`$ converges.
 
 **Sensitivity sweeps:**
-- supply scale × {0.6, 1.0, 1.5} on $`s_i`$
+- supply scale × {0.6, 1.0, 1.5}, applied to the **number of suppliers** $`N_S`$ rather than to $`s_i`$, so that every supplier can still meet its own minimum order in a 2-day round
 - $`P_{bulk} \in \lbrace 0, 0.005, 0.02\rbrace`$
 - $`c \in \lbrace 0.02, 0.05, 0.10\rbrace`$
 - $`\nu \in \lbrace 0.1, 0.25, 0.5\rbrace`$
@@ -474,11 +488,11 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
   - Mode B: `cat="Integer"` for $`x`$, and `cat="Binary"` for $`y`$ and $`w`$.
   - Fix $`w_j = 0`$ for capped requesters by setting `upBound=0`.
 - **Fast model building:** with ~10⁴–10⁵ edges, build the objective and the row sums with `pulp.LpAffineExpression([(var, coef), ...])` from prebuilt lists. Avoid nested `lpSum` over generators, which is slow at this size. Group edges by supplier and by requester once per round, and reuse the groups for (1), (2), (4), (5).
-- **Solver:** `pulp.PULP_CBC_CMD(msg=False, timeLimit=120)` for Mode B; there is no limit needed for Mode A.
-  - Check `pulp.LpStatus[prob.status]`, and use `prob.sol_status` to tell a proven optimum (1) from a time-limited feasible solution (2).
-  - For the gap bound in 7.5, solve a copy of the Mode B model with every variable relaxed to continuous.
-  - `pulp.HiGHS_CMD` can replace CBC if HiGHS is installed; the model is unchanged.
-- **Mode B size:** about 10⁴ binaries per round after filtering. Size grows with suppliers × requesters, not with the number of districts. If a round hits the time limit, report the gap. As a last resort, prune each requester's candidate edges to the top-$`k`$ by $`w_{ij}`$ (e.g. $`k = 30`$) or set $`\Delta_{max}`$. Report either as a heuristic.
+- **PuLP version:** pinned to **3.3.2**. PuLP 4.x (what a plain `pip install pulp` now gives) changed the modelling API and no longer bundles the CBC solver, so this code would not run on it unchanged.
+- **Solver:** CBC, bundled with PuLP 3.3.2. Mode A has no time limit. Mode B uses `PULP_CBC_CMD(msg=False, timeLimit=30, gapRel=0.005, warmStart=True)` on the candidate edges (Section 7.5).
+  - Check `pulp.LpStatus[prob.status]` and `prob.sol_status`: 1 means optimal within `gapRel`, 2 means a feasible solution found before the time limit. Anything else means no solution, and the greedy allocation is used.
+  - Setting `solver="highs"` switches to HiGHS (needs `pip install highspy`). The model is unchanged, but HiGHS through PuLP takes no warm start, so CBC is the default.
+- **Mode B size:** 13–26 thousand edges per round on the full-size placeholder; about 1–3 thousand after candidate selection. Size grows with suppliers × requesters, not with the number of districts. A full Mode B run takes about 1–2 minutes; a Mode A run takes a few seconds.
 - **Integers everywhere:** $`s_i`$, $`m_i`$, $`A_{i,\tau}`$, $`D_{j,\tau}`$, $`\tilde D_j`$, cap and $`r_{i,\tau}`$. Read $`x`$ via `var.varValue` (None means unsolved) and round it after the integrality assert.
 - **Reproducibility:** use one master seed and derive separate `numpy.random.Generator` streams for supplier generation, requester generation, match outcomes, abandonment and verification. That way changing a policy parameter doesn't change the generated instance or the outcome draws.
 - **Tests:**
@@ -490,3 +504,82 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
   - Bound: $`Z^{found}_B \le Z^{LP}_B \le Z^{\ast}_A`$.
   - Loader: the placeholder file loads with no errors; every diagonal value is in $`[10,20]`$; shuffling the file's row and column order gives the same $`R`$; a pair blanked out in the file never appears as an edge.
   - Learning: with $`\psi^{\ast} = \psi^0`$ and many rounds, $`\hat\psi`$ stays near the prior; with $`\psi^{\ast}`$ set very differently, $`\hat\psi`$ moves toward $`\psi^{\ast}`$.
+
+---
+
+## 15. Running the code
+
+### Setup (once)
+
+Python 3.10 or newer.
+
+```bash
+cd pulse_project
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### Project layout
+
+| Path | What it is |
+|---|---|
+| `pulse/config.py` | every parameter with its README default |
+| `pulse/districts.py` | Excel loader and validation (Section 2.1) |
+| `pulse/make_districts.py` | placeholder workbook generator |
+| `pulse/generator.py` | synthetic suppliers and requesters (Section 11) |
+| `pulse/model.py` | the round model in PuLP: Mode A, Mode B, greedy warm start |
+| `pulse/simulation.py` | the six-round loop (Sections 5 and 8) |
+| `pulse/metrics.py` | per-round records and run summaries (Section 9) |
+| `run.py` | one simulation, printed round by round |
+| `experiments.py` | ablation, sweeps and learning suites (Section 12) |
+| `plots.py` | figures from the experiment results |
+| `tests/` | the Section 7 properties and loader checks |
+
+### Commands
+
+```bash
+# one run (generates data/districts.xlsx on first use if it is missing)
+python run.py                          # Mode A, seed 1
+python run.py --mode B --seed 3        # Mode B (minimum orders), ~1-2 minutes
+python run.py --set c=0.1 --set "W=(1,2,3)" --set omega=0   # override any parameter
+
+# experiment suites; results go to results/
+python experiments.py --suite ablation --seeds 5
+python experiments.py --suite sweeps   --seeds 5
+python experiments.py --suite learning --seeds 5
+python experiments.py --suite all      --seeds 20 --jobs 4   # the full set for the report
+
+# figures from whatever is in results/
+python plots.py
+
+# tests (about 20 seconds)
+python -m pytest
+```
+
+`--set KEY=VALUE` works on both `run.py` and `experiments.py` and accepts any field of `pulse/config.py`. Numbers, `True`/`False`, `inf`, `None` and tuples such as `"(1,2,3)"` are all understood.
+
+### Using your real distance file
+
+Put the workbook anywhere, in the format of Section 2.1, and point to it:
+
+```bash
+python run.py --data path/to/real_districts.xlsx
+python experiments.py --suite all --data path/to/real_districts.xlsx
+```
+
+The first load of an 800 × 800 sheet takes a few seconds. After that it is read from `real_districts.xlsx.cache.npz`, which is rebuilt automatically whenever the workbook changes. If the file has a problem (mismatched IDs, a non-numeric cell, an off-diagonal zero), the loader stops with a message naming the cell.
+
+### Runtime
+
+Measured with 2 CPU cores: a Mode A run takes 2–6 seconds and a Mode B run 1.5–2.5 minutes. `--suite all --seeds 20` is roughly 2–3 hours, almost all of it the Mode B runs in the ablation. Raise `--jobs` on a machine with more cores, or start with `--seeds 5`.
+
+**Use many seeds.** Most matches fail (the success probabilities are 0.16–0.40) and a single match can be thousands of units, so one seed's realised fill is noisy. Differences between configurations at 1–2 seeds are mostly luck. Use at least 20 seeds for anything you report, and look at `exp_fill_overall` alongside the realised fills.
+
+### Outputs
+
+- `results/single/rounds.csv` and `summary.json`: from `run.py`. Add `--matches` to also get every individual match.
+- `results/<suite>_runs.csv`: one row per configuration and seed.
+- `results/<suite>_rounds.csv`: one row per configuration, seed and round.
+- `results/<suite>_table.csv`: mean and standard deviation per configuration.
+- `results/figures/*.png`: from `plots.py`.
