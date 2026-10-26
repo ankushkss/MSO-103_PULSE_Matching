@@ -32,12 +32,45 @@ The document is written to be implemented directly in Python with **PuLP** (bund
 ## 2. Sets and time
 
 - $`K`$: districts. $`\sigma(k)`$: state of district $`k`$.
-- $`R[k,l]`$: road distance in km. $`R[k,k] = r^{intra}_k > 0`$, a typical intra-district distance (input; default 20 km). $`R_{max} = \max_{k,l} R[k,l]`$.
+- $`R[k,l]`$: road distance in km from district $`k`$ (supplier side) to district $`l`$ (requester side), read from the input file (Section 2.1). $`R[k,l] = \infty`$ if the cell is missing (unreachable).
+- $`R[k,k] = r^{intra}_k`$: intra-district distance, drawn once per district from $`U[10, 20]`$ km with a seeded RNG, unless the file gives a positive diagonal value.
+- $`R_{max}`$: the largest **finite** entry of $`R`$.
 - Rounds $`\tau = 1,\dots,6`$ on days $`d_\tau \in \lbrace 1,3,5,8,10,12\rbrace`$. Gap $`\Delta_\tau = d_\tau - d_{\tau-1}`$ with $`d_0 = -1`$, so $`\Delta = (2,2,2,3,2,2)`$.
 - $`V`$: item variants (default {assembled, kit}).
 - $`I_\tau = \lbrace i : e_i \le \tau\rbrace`$: suppliers enrolled by round $`\tau`$, where $`e_i`$ is the enrolment round. Suppliers are never removed.
 - $`J_\tau`$: requesters active at round $`\tau`$, meaning arrived and not yet fully served or abandoned.
 - $`\mathcal{G} = \lbrace \text{same}, \text{cross}\rbrace`$: pair classes. $`g(i,j) = \text{same}`$ if $`\sigma(k(i)) = \sigma(k(j))`$, else cross.
+
+### 2.1 Input data file
+
+All district data comes from one Excel workbook. The code takes its path as a parameter, so the placeholder file and the real file are interchangeable.
+
+**Sheet `districts`**, one row per district:
+
+| Column | Required | Meaning |
+|---|---|---|
+| `district_id` | yes | unique ID, also used as the matrix headers |
+| `name` | yes | district name |
+| `state` | yes | state or UT name; defines $`\sigma(k)`$ |
+| `population` | no | used to place requesters (Section 11.2) |
+
+**Sheet `distances`**: an $`|K| \times |K|`$ matrix (about 800 × 800) of road distances in km. The first column holds row `district_id`s and the first row holds column `district_id`s. Row $`k`$, column $`l`$ is $`R[k,l]`$.
+
+**The loader checks and normalises:**
+- Row IDs, column IDs and the `districts` sheet contain exactly the same IDs. Rows and columns are reordered to the `districts` order, so the file's own ordering does not matter.
+- Every non-blank value is a number $`\ge 0`$.
+- **Diagonal** values that are 0 or blank are replaced by $`r^{intra}_k \sim U[10,20]`$ km.
+- **Off-diagonal blank cells** become $`\infty`$ (unreachable), so those pairs are never eligible. They are never set to 0, which would make them look like the closest pairs.
+- **Off-diagonal zeros** are an error, since two different districts cannot be 0 km apart.
+- **Asymmetry** is allowed. $`R[k,l]`$ is always read as supplier district $`k`$ to requester district $`l`$.
+- The number of blank cells and asymmetric pairs is logged.
+
+**Placeholder file**, used until the real one is ready, in exactly the same format:
+- 800 districts with IDs `D001`–`D800`, spread over 36 states/UTs `S01`–`S36`. District counts per state are drawn from a Dirichlet(1) split of the 800, with at least 1 district per state.
+- Each state gets a centre placed uniformly in a 3000 km × 3000 km square. Each district sits at its state centre plus Gaussian noise with $`\sigma = 150`$ km.
+- Off-diagonal road distance = 1.3 × straight-line distance, rounded to whole km and symmetric. The diagonal is left 0, so the loader's $`U[10,20]`$ rule is exercised.
+- Population ~ round(lognormal($`\ln(2 \times 10^6)`$, 0.6)).
+- Generated from a fixed seed and saved with `openpyxl`.
 
 ## 3. Parameters
 
@@ -168,7 +201,7 @@ $`S_g`$ and $`F_g`$ count **matches** (one per $`x_{ij} > 0`$), not units, becau
    a_{ij} = \gamma_{ij}\cdot \mathbf{1}[\pi_i \le \bar\pi_j]\cdot \mathbf{1}[q_i \ge \mathbf{1}[\kappa_j = 2]]\cdot \mathbf{1}[R[k(i),k(j)] \le \Delta_{max}]
    ```
 
-   In Mode B, also require $`\min(A_{i,\tau}, \tilde D_j) \ge m_i`$, because otherwise no valid shipment exists. The edge set is $`E_\tau = \lbrace (i,j) : a_{ij} = 1\rbrace`$, and variables exist only on edges.
+   A pair with $`R[k(i),k(j)] = \infty`$ (missing in the file) is never eligible, even when $`\Delta_{max} = \infty`$. In Mode B, also require $`\min(A_{i,\tau}, \tilde D_j) \ge m_i`$, because otherwise no valid shipment exists. The edge set is $`E_\tau = \lbrace (i,j) : a_{ij} = 1\rbrace`$, and variables exist only on edges.
 
 7. **Coefficients and bounds.** $`w_{ij} = p_j \hat\psi_{ij,\tau} - c_{ij}`$ and $`\bar x_{ij} = \min(A_{i,\tau}, \tilde D_j)`$.
 8. **Check (C2)** with the current $`\hat\psi`$. Log a warning if it fails; the model is still valid, but Property 7.2 no longer holds.
@@ -334,7 +367,7 @@ for tau in 1..6:
 
 ## 11. Synthetic data generator (seeded)
 
-District coordinates, states and the road-distance matrix are real inputs. Everything below is synthetic and scaled to the default item (face shields, prices in ₹).
+Districts, their states, populations and the road-distance matrix come from the input file (Section 2.1). Everything below is synthetic and scaled to the default item (face shields, prices in ₹).
 
 ### 11.1 Suppliers
 
@@ -355,7 +388,7 @@ District coordinates, states and the road-distance matrix are real inputs. Every
 | Item | Default |
 |---|---|
 | Arrivals at round $`\tau`$ | Poisson($`\lambda_\tau`$), $`\lambda_\tau = 120 \theta^{\tau-1}`$, $`\theta = 0.7`$ (surge, then decline) |
-| District | population-weighted if available, else uniform |
+| District | weighted by the `population` column if present, else uniform |
 | Urgency level $`\ell_j`$ = 1 / 2 / 3 | 0.3 / 0.4 / 0.3 |
 | True need $`n_j`$ | round(lognormal($`\ln 400`$, 1.4)), clipped to [50, 100000]; mean ≈ 1065, the paper's average request |
 | Size | $`\text{size}_j = \max\big(1, \lceil n_j g_j / (u T^{cov}) \rceil\big)`$, $`g_j \sim \text{lognormal}(\ln 2, 0.5)`$ |
@@ -416,7 +449,7 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
 
 1. **One item, pooled capacity.** A supplier's daily rate is shared across variants; real lines produce kits and assembled units at different rates.
 2. **Declared data is truthful and fixed.** Capacity, price, certification and size don't change after enrolment, and suppliers don't reprice.
-3. **Districts are points.** All locations in a district are represented by one point, with a fixed intra-district distance.
+3. **Districts are points.** All locations in a district are represented by one point. Distance within a district is a random $`U[10,20]`$ km draw, not measured.
 4. **No transport model.** There are no lead times, vehicle capacity or delivery scheduling. The price is a delivered price; who pays for shipping is outside the model.
 5. **Learning is coarse.**
    - The ψ prior comes from US data.
@@ -434,6 +467,7 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
 
 ## 14. Implementation notes (PuLP)
 
+- **Loading the distance file:** read both sheets with `pandas.read_excel(path, sheet_name=..., engine="openpyxl")`, run the checks in Section 2.1, and store $`R`$ as a NumPy float array with `np.inf` for unreachable pairs. Reading an 800 × 800 sheet takes several seconds, so cache the result as a `.npz` file next to the workbook and reuse it while the workbook's modification time is unchanged. Each supplier and requester stores its district as an integer row index into $`R`$, so $`R[k(i),k(j)]`$ is a direct array lookup.
 - **Eligibility:** build $`a_{ij}`$ with vectorised NumPy boolean operations over (enrolled suppliers × active requesters), then create variables only on edges.
 - **Model:** `prob = pulp.LpProblem("pulse_round", pulp.LpMaximize)`.
   - Mode A: `LpVariable(..., lowBound=0, upBound=xbar_ij, cat="Continuous")`.
@@ -454,4 +488,5 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
   - Minimum order: $`x_{ij} = 0`$ or $`x_{ij} \ge m_i`$ in Mode B.
   - Conservation: supplier and requester balances before and after each round.
   - Bound: $`Z^{found}_B \le Z^{LP}_B \le Z^{\ast}_A`$.
+  - Loader: the placeholder file loads with no errors; every diagonal value is in $`[10,20]`$; shuffling the file's row and column order gives the same $`R`$; a pair blanked out in the file never appears as an edge.
   - Learning: with $`\psi^{\ast} = \psi^0`$ and many rounds, $`\hat\psi`$ stays near the prior; with $`\psi^{\ast}`$ set very differently, $`\hat\psi`$ moves toward $`\psi^{\ast}`$.
