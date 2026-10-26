@@ -101,8 +101,9 @@ class Simulation:
         psi = self.psi_hat()
         c2_ok = self.c2_holds(psi)
         if not c2_ok:
-            log.warning("round %d: (C2) fails with psi_hat = %s; urgency no longer strictly "
-                        "dominates locality", tau, np.round(psi, 3))
+            # Expected whenever W is not lexicographic-like, e.g. W = (1, 2, 3).
+            # Recorded per round as `c2_ok` and per run as `c2_failures`.
+            log.debug("round %d: (C2) fails with psi_hat = %s", tau, np.round(psi, 3))
 
         # 6. eligibility (vectorised over suppliers x requesters)
         sd, rd = inst.s_dist[sup], inst.r_dist[req]

@@ -98,6 +98,11 @@ def learning_suite(base: Config) -> list[tuple[str, str, dict]]:
 
 
 # ---------------------------------------------------------------- running
+def _init_worker():
+    # Worker processes start fresh on Windows (spawn), so set logging again.
+    logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")
+
+
 def _run_one(args):
     label, group, overrides, base, seed = args
     cfg = base.with_(**overrides)
@@ -121,7 +126,7 @@ def run_suite(name: str, configs, base: Config, seeds: list[int], jobs: int, out
             rounds.extend(r)
             print(f"  {k}/{len(tasks)}  {s['config']}  seed {s['seed']}  ({s['wall_seconds']}s)", flush=True)
     else:
-        with ProcessPoolExecutor(max_workers=jobs) as ex:
+        with ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker) as ex:
             futs = [ex.submit(_run_one, t) for t in tasks]
             for k, f in enumerate(as_completed(futs), 1):
                 s, r = f.result()
