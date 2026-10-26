@@ -33,11 +33,11 @@ The document is written to be implemented directly in Python with **PuLP** (bund
 
 - $K$: districts. $\sigma(k)$: state of district $k$.
 - $R[k,l]$: road distance in km. $R[k,k] = r^{intra}_k > 0$, a typical intra-district distance (input; default 20 km). $R_{max} = \max_{k,l} R[k,l]$.
-- Rounds $\tau = 1,\dots,6$ on days $d_\tau \in \{1,3,5,8,10,12\}$. Gap $\Delta_\tau = d_\tau - d_{\tau-1}$ with $d_0 = -1$, so $\Delta = (2,2,2,3,2,2)$.
+- Rounds $\tau = 1,\dots,6$ on days $d_\tau \in \lbrace 1,3,5,8,10,12\rbrace$. Gap $\Delta_\tau = d_\tau - d_{\tau-1}$ with $d_0 = -1$, so $\Delta = (2,2,2,3,2,2)$.
 - $V$: item variants (default {assembled, kit}).
-- $I_\tau = \{i : e_i \le \tau\}$: suppliers enrolled by round $\tau$, where $e_i$ is the enrolment round. Suppliers are never removed.
+- $I_\tau = \lbrace i : e_i \le \tau\rbrace$: suppliers enrolled by round $\tau$, where $e_i$ is the enrolment round. Suppliers are never removed.
 - $J_\tau$: requesters active at round $\tau$, meaning arrived and not yet fully served or abandoned.
-- $\mathcal{G} = \{\text{same}, \text{cross}\}$: pair classes. $g(i,j) = \text{same}$ if $\sigma(k(i)) = \sigma(k(j))$, else cross.
+- $\mathcal{G} = \lbrace \text{same}, \text{cross}\rbrace$: pair classes. $g(i,j) = \text{same}$ if $\sigma(k(i)) = \sigma(k(j))$, else cross.
 
 ## 3. Parameters
 
@@ -50,7 +50,7 @@ The document is written to be implemented directly in Python with **PuLP** (bund
 | $s_i \in \mathbb{Z}_{+}$ | production rate, units per **day** |
 | $m_i \in \mathbb{Z}_{+}$ | minimum order per shipment, declared by the supplier, with $m_i \ge m_{min}$ |
 | $\pi_i > 0$ | unit price (delivered) |
-| $q_i \in \{0,1\}$ | 1 = quality-certified |
+| $q_i \in \lbrace 0,1\rbrace$ | 1 = quality-certified |
 | $V_i \subseteq V$ | variants offered |
 
 ### 3.2 Requester $j$
@@ -62,10 +62,10 @@ Each requester submits **one request** at its arrival round $\tau_j$.
 | $k(j)$ | district |
 | $\tau_j$ | arrival round |
 | $D^0_j \in \mathbb{Z}_{+}$ | request size, $D^0_j \ge m_{min}$ |
-| $\ell_j \in \{1,2,3\}$ | urgency level, from facility type (table below) |
+| $\ell_j \in \lbrace 1,2,3\rbrace$ | urgency level, from facility type (table below) |
 | $p_j = W[\ell_j]$ | urgency weight |
 | $\bar\pi_j$ | maximum acceptable unit price |
-| $\kappa_j \in \{0,1,2\}$ | certificate need: 0 = none, 1 = prefer certified, 2 = require certified |
+| $\kappa_j \in \lbrace 0,1,2\rbrace$ | certificate need: 0 = none, 1 = prefer certified, 2 = require certified |
 | $V_j \subseteq V$, $V_j \ne \emptyset$ | acceptable variants |
 | $\text{size}_j \in \mathbb{Z}_{+}$ | staff count (or beds), declared on the intake form |
 
@@ -96,7 +96,7 @@ Each parameter has a **class**, which says how it is justified in the report:
 | $\psi^0_{same}, \psi^0_{cross}$ | prior mean success probability | 0.40, 0.16 | Calibration |
 | $n_0$ | prior strength, in pseudo-matches | 20 | Calibration |
 | $\psi_{floor}$ | lower clip on learned $\hat\psi$ | 0.05 | Policy |
-| $\psi^{*}_{same}, \psi^{*}_{cross}$ | **true** success probability, used only to draw outcomes | = prior | Scenario |
+| $\psi^{\ast}_{same}, \psi^{\ast}_{cross}$ | **true** success probability, used only to draw outcomes | = prior | Scenario |
 | $u$ | plausible usage, units per staff per day | 0.5 | Behavioural |
 | $T^{cov}$ | days of coverage a request may plausibly cover | 14 | Policy |
 | $\nu$ | probability a flagged requester is verified (unflagged) per round | 0.25 | Behavioural |
@@ -104,24 +104,24 @@ Each parameter has a **class**, which says how it is justified in the report:
 | $h$ | storage cap, in days of production | 5 | Behavioural |
 | $\omega$ | probability an unserved requester abandons per round | 0.10 | Behavioural |
 | `enforce_min_shipment` | Mode A (False, LP) / Mode B (True, MILP) | per run | Switch |
-| `simulate_failures` | draw match success from $\psi^{*}$ (True), or all succeed (False) | True | Switch |
+| `simulate_failures` | draw match success from $\psi^{\ast}$ (True), or all succeed (False) | True | Switch |
 | `learn_psi` | update $\hat\psi$ from outcomes (requires `simulate_failures`) | True | Switch |
 
 **Required conditions:**
 - (C1) $\tilde\alpha + \beta + \mu < W[1]\cdot\psi_{floor}$. Defaults: $0.024 < 0.05$.
-- (C2) $\hat\psi_{same} < 10\,\hat\psi_{cross} - (\tilde\alpha+\beta+\mu)$, checked every round. Defaults: $0.40 < 1.576$.
+- (C2) $\hat\psi_{same} < 10 \hat\psi_{cross} - (\tilde\alpha+\beta+\mu)$, checked every round. Defaults: $0.40 < 1.576$.
 
 Section 7 explains both.
 
-**Prior calibration.** The paper reports a 27% success rate among classified matches, 48% of matches local (same state), and an odds ratio of 3.55 for local matches. Solving $0.48\,\psi_{same} + 0.52\,\psi_{cross} = 0.27$ together with $\text{odds}(\psi_{same}) = 3.55\cdot\text{odds}(\psi_{cross})$ gives $\psi_{same} \approx 0.40$ and $\psi_{cross} \approx 0.16$.
+**Prior calibration.** The paper reports a 27% success rate among classified matches, 48% of matches local (same state), and an odds ratio of 3.55 for local matches. Solving $0.48 \psi_{same} + 0.52 \psi_{cross} = 0.27$ together with $\text{odds}(\psi_{same}) = 3.55\cdot\text{odds}(\psi_{cross})$ gives $\psi_{same} \approx 0.40$ and $\psi_{cross} \approx 0.16$.
 
 ### 3.4 Derived per-pair quantities
 
-- Variant compatibility: $\gamma_{ij} = \mathbb{1}[V_i \cap V_j \ne \emptyset]$.
+- Variant compatibility: $\gamma_{ij} = \mathbf{1}[V_i \cap V_j \ne \emptyset]$.
 - Normalised distance: $\hat c_{ij} = R[k(i),k(j)] / R_{max} \in (0,1]$.
 - Normalised price: $\rho_{ij} = \pi_i / \bar\pi_j \in (0,1]$ on eligible pairs.
 - Believed success probability: $\hat\psi_{ij,\tau} = \hat\psi_{g(i,j),\tau}$ (Section 4).
-- Tie-break cost: $c_{ij} = \tilde\alpha\,\hat c_{ij} + \beta\,\rho_{ij} + \mu\,\mathbb{1}[\kappa_j = 1]\,(1 - q_i)$.
+- Tie-break cost: $c_{ij} = \tilde\alpha \hat c_{ij} + \beta \rho_{ij} + \mu \mathbf{1}[\kappa_j = 1] (1 - q_i)$.
 - Plausible need: $P_j = u \cdot \text{size}_j \cdot T^{cov}$.
 
 ---
@@ -132,13 +132,13 @@ Section 7 explains both.
 |---|---|---|
 | $r_{i,\tau-1}$ | supplier stock carried into round $\tau$ | 0 |
 | $carry_{j,\tau-1}$ | requester's outstanding demand carried into round $\tau$ | 0 |
-| $z_j \in \{0,1\}$ | plausibility flag | set at arrival (Section 5, step 4) |
+| $z_j \in \lbrace 0,1\rbrace$ | plausibility flag | set at arrival (Section 5, step 4) |
 | $S_g, F_g$ | observed successful / failed matches in class $g$ | 0 |
 
 The belief used in round $\tau$ is the Beta posterior mean, clipped:
 
 $$
-\hat\psi_{g,\tau} = \max\!\left(\psi_{floor},\ \frac{n_0\,\psi^0_g + S_g}{n_0 + S_g + F_g}\right)
+\hat\psi_{g,\tau} = \max\left(\psi_{floor},\ \frac{n_0 \psi^0_g + S_g}{n_0 + S_g + F_g}\right)
 $$
 
 $S_g$ and $F_g$ count **matches** (one per $x_{ij} > 0$), not units, because a match succeeds or fails as a whole. If `learn_psi` is False, $\hat\psi_g = \psi^0_g$ throughout.
@@ -148,29 +148,29 @@ $S_g$ and $F_g$ count **matches** (one per $x_{ij} > 0$), not units, because a m
 ## 5. Pre-solve for round $\tau$
 
 1. **Enrolment and arrivals.** Add suppliers with $e_i = \tau$. Add requesters with $\tau_j = \tau$.
-2. **Supply.** Fresh production $f_{i,\tau} = s_i\,\Delta_\tau$. Available stock $A_{i,\tau} = f_{i,\tau} + r_{i,\tau-1}$. Total $A^{tot}_\tau = \sum_{i \in I_\tau} A_{i,\tau}$.
-3. **Outstanding demand.** $D_{j,\tau} = carry_{j,\tau-1} + D^0_j\,\mathbb{1}[\tau = \tau_j]$.
-4. **Plausibility flag (new arrivals only).** $z_j = \mathbb{1}[D^0_j > P_j]$.
-5. **Share cap.** $\text{cap}_\tau = \max(\lfloor c\,A^{tot}_\tau \rfloor,\ m_{min})$ and
+2. **Supply.** Fresh production $f_{i,\tau} = s_i \Delta_\tau$. Available stock $A_{i,\tau} = f_{i,\tau} + r_{i,\tau-1}$. Total $A^{tot}_\tau = \sum_{i \in I_\tau} A_{i,\tau}$.
+3. **Outstanding demand.** $D_{j,\tau} = carry_{j,\tau-1} + D^0_j \mathbf{1}[\tau = \tau_j]$.
+4. **Plausibility flag (new arrivals only).** $z_j = \mathbf{1}[D^0_j > P_j]$.
+5. **Share cap.** $\text{cap}_\tau = \max(\lfloor c A^{tot}_\tau \rfloor,\ m_{min})$ and
 
-$$
-\tilde D_j = \begin{cases}
-\min(D_{j,\tau},\ \text{cap}_\tau) & \text{if } z_j = 1\\
-D_{j,\tau} & \text{otherwise}
-\end{cases}
-$$
+   $$
+   \tilde D_j = \begin{cases}
+   \min(D_{j,\tau},\ \text{cap}_\tau) & \text{if } z_j = 1\\
+   D_{j,\tau} & \text{otherwise}
+   \end{cases}
+   $$
 
    The cap applies to every flagged requester in every round until verification, whatever the aggregate supply. Demand above the cap is **deferred, not dropped**: it stays in $D_{j,\tau}$. A flag means *unverified*, not *guilty*.
 
 6. **Eligibility.**
 
-$$
-a_{ij} = \gamma_{ij}\cdot \mathbb{1}[\pi_i \le \bar\pi_j]\cdot \mathbb{1}[q_i \ge \mathbb{1}[\kappa_j = 2]]\cdot \mathbb{1}[R[k(i),k(j)] \le \Delta_{max}]
-$$
+   $$
+   a_{ij} = \gamma_{ij}\cdot \mathbf{1}[\pi_i \le \bar\pi_j]\cdot \mathbf{1}[q_i \ge \mathbf{1}[\kappa_j = 2]]\cdot \mathbf{1}[R[k(i),k(j)] \le \Delta_{max}]
+   $$
 
-   In Mode B, also require $\min(A_{i,\tau}, \tilde D_j) \ge m_i$, because otherwise no valid shipment exists. The edge set is $E_\tau = \{(i,j) : a_{ij} = 1\}$, and variables exist only on edges.
+   In Mode B, also require $\min(A_{i,\tau}, \tilde D_j) \ge m_i$, because otherwise no valid shipment exists. The edge set is $E_\tau = \lbrace (i,j) : a_{ij} = 1\rbrace$, and variables exist only on edges.
 
-7. **Coefficients and bounds.** $w_{ij} = p_j\,\hat\psi_{ij,\tau} - c_{ij}$ and $\bar x_{ij} = \min(A_{i,\tau}, \tilde D_j)$.
+7. **Coefficients and bounds.** $w_{ij} = p_j \hat\psi_{ij,\tau} - c_{ij}$ and $\bar x_{ij} = \min(A_{i,\tau}, \tilde D_j)$.
 8. **Check (C2)** with the current $\hat\psi$. Log a warning if it fails; the model is still valid, but Property 7.2 no longer holds.
 
 ---
@@ -182,13 +182,13 @@ $$
 Minimise expected urgency-weighted shortfall plus tie-break costs:
 
 $$
-\min\ \sum_{j\in J_\tau} p_j\Big(\tilde D_j - \sum_{i} \hat\psi_{ij}\,x_{ij}\Big) \;+\; \sum_{(i,j)\in E_\tau} c_{ij}\,x_{ij}
+\min\ \sum_{j\in J_\tau} p_j\Big(\tilde D_j - \sum_{i} \hat\psi_{ij} x_{ij}\Big) \quad +\quad  \sum_{(i,j)\in E_\tau} c_{ij} x_{ij}
 $$
 
 Dropping the constant $\sum_j p_j \tilde D_j$, this is the same as
 
 $$
-\max\ \sum_{(i,j)\in E_\tau} w_{ij}\,x_{ij}, \qquad w_{ij} = p_j\,\hat\psi_{ij} - c_{ij} > 0 .
+\max\ \sum_{(i,j)\in E_\tau} w_{ij} x_{ij}, \qquad w_{ij} = p_j \hat\psi_{ij} - c_{ij} > 0 .
 $$
 
 Implement the second form (`LpMaximize`).
@@ -205,14 +205,14 @@ $$
 
 ### 6.3 Mode B (MILP, strict minimum order, no tiny remainder)
 
-Add $y_{ij} \in \{0,1\}$ per edge (1 = shipment happens) and $w_j \in \{0,1\}$ per requester (1 = fully closed this round). $x_{ij} \in \mathbb{Z}_{+}$.
+Add $y_{ij} \in \lbrace 0,1\rbrace$ per edge (1 = shipment happens) and $w_j \in \lbrace 0,1\rbrace$ per requester (1 = fully closed this round). $x_{ij} \in \mathbb{Z}_{+}$.
 
 $$
 \begin{aligned}
 &(1),\ (2)\\
-&m_i\,y_{ij} \le x_{ij} \le \bar x_{ij}\,y_{ij} && \forall (i,j)\in E_\tau && (3)\\
-&\sum_i x_{ij} \ge D_{j,\tau}\,w_j && \forall j && (4)\\
-&\sum_i x_{ij} \le D_{j,\tau} - m_{min}\,(1 - w_j) && \forall j && (5)
+&m_i y_{ij} \le x_{ij} \le \bar x_{ij} y_{ij} && \forall (i,j)\in E_\tau && (3)\\
+&\sum_i x_{ij} \ge D_{j,\tau} w_j && \forall j && (4)\\
+&\sum_i x_{ij} \le D_{j,\tau} - m_{min} (1 - w_j) && \forall j && (5)
 \end{aligned}
 $$
 
@@ -230,11 +230,11 @@ $$
 ## 7. Properties (each one is also a test)
 
 ### 7.1 Serving always beats not serving
-For every edge, $w_{ij} \ge W[1]\,\psi_{floor} - (\tilde\alpha+\beta+\mu) > 0$ by (C1). This holds every round, whatever the learning does, because $\hat\psi$ is clipped at $\psi_{floor}$. In **Mode A**, an optimal solution therefore never leaves an edge where the supplier still has stock **and** the requester still has matchable demand.
+For every edge, $w_{ij} \ge W[1] \psi_{floor} - (\tilde\alpha+\beta+\mu) > 0$ by (C1). This holds every round, whatever the learning does, because $\hat\psi$ is clipped at $\psi_{floor}$. In **Mode A**, an optimal solution therefore never leaves an edge where the supplier still has stock **and** the requester still has matchable demand.
 **Test:** after solving Mode A, assert there is no edge with $A_{i,\tau} - \sum_j x_{ij} > 0$ and $\tilde D_j - \sum_i x_{ij} > 0$.
 
 ### 7.2 Urgency dominates across levels; locality decides within a level
-A unit's value is $p_j\,\hat\psi_{ij}$, up to tie-breaks. With $W = (1,10,100)$ and the prior $\hat\psi$:
+A unit's value is $p_j \hat\psi_{ij}$, up to tie-breaks. With $W = (1,10,100)$ and the prior $\hat\psi$:
 
 | Level | same state | cross state |
 |---|---|---|
@@ -242,7 +242,7 @@ A unit's value is $p_j\,\hat\psi_{ij}$, up to tie-breaks. With $W = (1,10,100)$ 
 | 2 | 4.0 | 1.6 |
 | 3 | 40 | 16 |
 
-The worst cross-state unit at a higher level beats the best same-state unit at the level below as long as $10\,\hat\psi_{cross} - (\tilde\alpha+\beta+\mu) > \hat\psi_{same}$, which is (C2). The gap between levels is a factor of 10 and the worst level-boundary case is level 1 vs level 2, so (C2) covers every pair of levels.
+The worst cross-state unit at a higher level beats the best same-state unit at the level below as long as $10 \hat\psi_{cross} - (\tilde\alpha+\beta+\mu) > \hat\psi_{same}$, which is (C2). The gap between levels is a factor of 10 and the worst level-boundary case is level 1 vs level 2, so (C2) covers every pair of levels.
 
 Within a level, same-state pairs are preferred by a factor of $\hat\psi_{same}/\hat\psi_{cross}$. Then come the certificate preference ($\mu$), then distance and price ($\tilde\alpha, \beta$).
 
@@ -261,20 +261,20 @@ $x = y = w = 0$ is feasible if and only if $D_{j,\tau} \ge m_{min}$ for every ac
 **Test:** assert the invariant on every carry in Mode B.
 
 ### 7.5 Bounds on Mode B
-Mode B only adds constraints to Mode A, so $Z^*_B \le Z^*_A$. A tighter bound is $Z^{LP}_B$, Mode B with all variables made continuous. For each round, report:
+Mode B only adds constraints to Mode A, so $Z^{\ast}_B \le Z^{\ast}_A$. A tighter bound is $Z^{LP}_B$, Mode B with all variables made continuous. For each round, report:
 
 $$
 \text{gap}_\tau = \frac{Z^{LP}_B - Z^{found}_B}{Z^{LP}_B}
 $$
 
-This is an upper bound on how far a time-limited Mode B solution can be from optimal. Separately, report $Z^*_A - Z^*_B$ as the **cost of minimum orders**.
+This is an upper bound on how far a time-limited Mode B solution can be from optimal. Separately, report $Z^{\ast}_A - Z^{\ast}_B$ as the **cost of minimum orders**.
 
 ### 7.6 Shield-Net is a special case
 Set:
 - $\hat\psi \equiv 1$ with `learn_psi` False, and $W = (1,2,3)$
 - $\beta = \mu = 0$, $\eta = 0$, $\omega = 0$
 - all $z_j = 0$ (no cap), and no price or certificate filters
-- $\tilde\alpha\,\hat c_{ij}$ equal to the paper's $\alpha c_{ij}$
+- $\tilde\alpha \hat c_{ij}$ equal to the paper's $\alpha c_{ij}$
 - Mode A
 
 The model then reduces to the paper's LP. This is the baseline for comparisons (Section 12).
@@ -285,9 +285,9 @@ The model then reduces to the paper's LP. This is the baseline for comparisons (
 
 Run these in order.
 
-1. **Realise matches.** For each $x^*_{ij} > 0$, draw $B_{ij} \sim \text{Bernoulli}(\psi^{*}_{g(i,j)})$ if `simulate_failures`, else $B_{ij} = 1$. Delivered: $\delta_{ij} = x^*_{ij}\,B_{ij}$. Outcomes are drawn from the **true** $\psi^{*}$, never from $\hat\psi$.
+1. **Realise matches.** For each $x^{\ast}_{ij} > 0$, draw $B_{ij} \sim \text{Bernoulli}(\psi^{\ast}_{g(i,j)})$ if `simulate_failures`, else $B_{ij} = 1$. Delivered: $\delta_{ij} = x^{\ast}_{ij} B_{ij}$. Outcomes are drawn from the **true** $\psi^{\ast}$, never from $\hat\psi$.
 2. **Learn.** If `learn_psi`: for each match, add 1 to $S_{g(i,j)}$ if $B_{ij} = 1$, else to $F_{g(i,j)}$. The new $\hat\psi$ takes effect next round.
-3. **Suppliers.** Unsold stock $\ell_i = A_{i,\tau} - \sum_j \delta_{ij}$ (failed shipments stay with the supplier). Carry-over $r_{i,\tau} = \min(\lfloor \eta\,\ell_i \rfloor,\ h\,s_i)$.
+3. **Suppliers.** Unsold stock $\ell_i = A_{i,\tau} - \sum_j \delta_{ij}$ (failed shipments stay with the supplier). Carry-over $r_{i,\tau} = \min(\lfloor \eta \ell_i \rfloor,\ h s_i)$.
 4. **Requesters.** $carry_{j,\tau} = D_{j,\tau} - \sum_i \delta_{ij}$. Remove $j$ if this is 0 (served).
 5. **Abandonment.** Each remaining $j$ leaves with probability $\omega$. Log its residual as abandoned demand.
 6. **Verification.** Each remaining flagged $j$ ($z_j = 1$) is unflagged with probability $\nu$.
@@ -296,16 +296,16 @@ Run these in order.
 
 ## 9. Metrics logged per round
 
-- **Allocation:** units allocated $\sum x^*$; expected delivered $\sum \hat\psi x^*$; realised delivered $\sum \delta$.
+- **Allocation:** units allocated $\sum x^{\ast}$; expected delivered $\sum \hat\psi x^{\ast}$; realised delivered $\sum \delta$.
 - **Fill rates:** realised fill overall and by urgency level; fill of non-flagged level-3 requesters (the group the cap protects).
-- **Supply:** $A^{tot}_\tau$; aggregate supply/demand ratio $A^{tot}_\tau / \sum_j D_{j,\tau}$; utilisation $\sum x^* / A^{tot}$; leaked stock; stock lost to the storage cap.
+- **Supply:** $A^{tot}_\tau$; aggregate supply/demand ratio $A^{tot}_\tau / \sum_j D_{j,\tau}$; utilisation $\sum x^{\ast} / A^{tot}$; leaked stock; stock lost to the storage cap.
 - **Geography:** share of same-state matches, share of same-district matches, mean and median road distance.
 - **Price and quality:** mean unit price paid; share of certified units overall and to $\kappa = 1$ requesters.
 - **Hoarding control:** number of flagged requesters; units deferred by the cap; verifications this round.
-- **Learning:** $\hat\psi_{same}, \hat\psi_{cross}$ and their gap to $\psi^{*}$; whether (C2) holds.
+- **Learning:** $\hat\psi_{same}, \hat\psi_{cross}$ and their gap to $\psi^{\ast}$; whether (C2) holds.
 - **Failures and exits:** failed matches and units; abandoned requesters and units.
 - **Stranded requesters:** active with no eligible edge, broken down by cause (variant, price, certificate, distance, minimum order).
-- **Solver:** status, objective, time, number of edges and binaries; for Mode B, $Z^{LP}_B$ and gap$_\tau$.
+- **Solver:** status, objective, time, number of edges and binaries; for Mode B, $Z^{LP}_B$ and $\text{gap}_\tau$.
 - **End of horizon:** outstanding demand after round 6, which is truncated, not unmet forever.
 
 ---
@@ -354,18 +354,18 @@ District coordinates, states and the road-distance matrix are real inputs. Every
 
 | Item | Default |
 |---|---|
-| Arrivals at round $\tau$ | Poisson($\lambda_\tau$), $\lambda_\tau = 120\,\theta^{\tau-1}$, $\theta = 0.7$ (surge, then decline) |
+| Arrivals at round $\tau$ | Poisson($\lambda_\tau$), $\lambda_\tau = 120 \theta^{\tau-1}$, $\theta = 0.7$ (surge, then decline) |
 | District | population-weighted if available, else uniform |
 | Urgency level $\ell_j$ = 1 / 2 / 3 | 0.3 / 0.4 / 0.3 |
 | True need $n_j$ | round(lognormal($\ln 400$, 1.4)), clipped to [50, 100000]; mean ≈ 1065, the paper's average request |
-| Size | $\text{size}_j = \max\big(1, \lceil n_j\, g_j / (u\,T^{cov}) \rceil\big)$, $g_j \sim \text{lognormal}(\ln 2, 0.5)$ |
+| Size | $\text{size}_j = \max\big(1, \lceil n_j g_j / (u T^{cov}) \rceil\big)$, $g_j \sim \text{lognormal}(\ln 2, 0.5)$ |
 | Request $D^0_j$ | $n_j$ (normal requester) |
 | Max price $\bar\pi_j$ | $U[30,120] + 20(\ell_j - 1)$ |
 | $\kappa_j$ = 0 / 1 / 2 | $\ell=1$: 0.5 / 0.3 / 0.2; $\ell=2$: 0.3 / 0.4 / 0.3; $\ell=3$: 0.2 / 0.3 / 0.5 |
 | Acceptable variants (assembled / kit / either) | 0.40 / 0.33 / 0.27 |
 | Bulk requester | each arrival is bulk with probability $P_{bulk} = 0.005$; $D^0_j = \text{round}(U[0.5,1.5] \times \bar A_1)$, exempt from the 100000 clip; $\text{size}_j$ drawn from $n_j$ as for a normal requester |
 
-Here $\bar A_1 = 0.7\,N_S \cdot 2 \cdot \mathbb{E}[s_i]$ is the expected round-1 supply, about 112k units.
+Here $\bar A_1 = 0.7 N_S \cdot 2 \cdot \mathbb{E}[s_i]$ is the expected round-1 supply, about 112k units.
 
 **Calibration check.**
 - $\mathbb{E}[s_i] = 0.5(62.5) + 0.3(155) + 0.2(500) = 177.75$ units per day.
@@ -391,16 +391,16 @@ Use the same seeds across settings and at least 20 seeds per setting.
 
 Run with `simulate_failures = True` throughout so every step is measured on **realised** deliveries.
 
-**Value of learning.** Set the true $\psi^{*}_{cross} \in \{0.08, 0.16, 0.25\}$ and $\psi^{*}_{same} \in \{0.30, 0.40, 0.55\}$, so the prior is right or wrong in either direction. Compare `learn_psi` on vs off on realised fill, and track how fast $\hat\psi$ converges.
+**Value of learning.** Set the true $\psi^{\ast}_{cross} \in \lbrace 0.08, 0.16, 0.25\rbrace$ and $\psi^{\ast}_{same} \in \lbrace 0.30, 0.40, 0.55\rbrace$, so the prior is right or wrong in either direction. Compare `learn_psi` on vs off on realised fill, and track how fast $\hat\psi$ converges.
 
 **Sensitivity sweeps:**
 - supply scale × {0.6, 1.0, 1.5} on $s_i$
-- $P_{bulk} \in \{0, 0.005, 0.02\}$
-- $c \in \{0.02, 0.05, 0.10\}$
-- $\nu \in \{0.1, 0.25, 0.5\}$
-- $\eta \in \{0, 0.5, 1\}$
-- $\omega \in \{0, 0.1, 0.2\}$
-- $W \in \{(1,10,100), (1,2,3)\}$
+- $P_{bulk} \in \lbrace 0, 0.005, 0.02\rbrace$
+- $c \in \lbrace 0.02, 0.05, 0.10\rbrace$
+- $\nu \in \lbrace 0.1, 0.25, 0.5\rbrace$
+- $\eta \in \lbrace 0, 0.5, 1\rbrace$
+- $\omega \in \lbrace 0, 0.1, 0.2\rbrace$
+- $W \in \lbrace (1,10,100), (1,2,3)\rbrace$
 - Mode A vs Mode B
 
 **Headline comparisons:**
@@ -453,5 +453,5 @@ Run with `simulate_failures = True` throughout so every step is measured on **re
   - Cap: $\sum_i x_{ij} \le \text{cap}_\tau$ for flagged $j$.
   - Minimum order: $x_{ij} = 0$ or $x_{ij} \ge m_i$ in Mode B.
   - Conservation: supplier and requester balances before and after each round.
-  - Bound: $Z^{found}_B \le Z^{LP}_B \le Z^*_A$.
-  - Learning: with $\psi^{*} = \psi^0$ and many rounds, $\hat\psi$ stays near the prior; with $\psi^{*}$ set very differently, $\hat\psi$ moves toward $\psi^{*}$.
+  - Bound: $Z^{found}_B \le Z^{LP}_B \le Z^{\ast}_A$.
+  - Learning: with $\psi^{\ast} = \psi^0$ and many rounds, $\hat\psi$ stays near the prior; with $\psi^{\ast}$ set very differently, $\hat\psi$ moves toward $\psi^{\ast}$.
