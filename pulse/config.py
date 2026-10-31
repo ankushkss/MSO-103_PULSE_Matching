@@ -26,8 +26,9 @@ class Config:
 
     # ---------------- policy ----------------
     W: tuple = (1.0, 10.0, 100.0)       # urgency weights for levels 1/2/3
-    m_min: int = 50                     # platform minimum request size; also the floor of the cap
-    c: float = 0.05                     # share cap for flagged requesters
+    m_min: int = 50                     # platform minimum request size
+    H: float = 14.0                     # days of plausible need counted as "core"
+    excess_weight: float = 1e-4         # value of an excess unit relative to the same unit as core
     alpha: float = 0.002                # distance tie-break weight (alpha-tilde)
     beta: float = 0.002                 # price tie-break weight
     mu: float = 0.02                    # "prefer certified" penalty per unit
@@ -36,15 +37,13 @@ class Config:
     psi0_cross: float = 0.16            # prior success probability, cross state
     n0: float = 20.0                    # prior strength (pseudo-matches)
     psi_floor: float = 0.05             # lower clip on learned psi-hat
-    T_cov: float = 14.0                 # plausible coverage days
 
     # ---------------- scenario (truth, unknown to the model) ----------------
     psi_true_same: Optional[float] = None   # None = equal to the prior
     psi_true_cross: Optional[float] = None
 
     # ---------------- behavioural ----------------
-    u: float = 0.5                      # plausible usage per staff per day
-    nu: float = 0.25                    # verification probability per round
+    usage_rates: tuple = (0.25, 0.5, 1.0)   # plausible units per staff per day, levels 1/2/3
     eta: float = 0.5                    # share of unsold stock kept
     h: float = 5.0                      # storage cap in days of production
     omega: float = 0.10                 # abandonment probability per round
@@ -53,7 +52,7 @@ class Config:
     simulate_failures: bool = True
     learn_psi: bool = True
     use_psi_objective: bool = True      # False = Shield-Net style (psi-hat fixed at 1)
-    hoarding_control: bool = True       # False = nobody is ever flagged
+    core_excess: bool = True            # False = the whole request is treated as core
     price_filter: bool = True
     cert_filter: bool = True
 
@@ -79,6 +78,7 @@ class Config:
     need_median: float = 400.0
     need_sigma: float = 1.4
     need_clip: tuple = (50, 100000)
+    need_days: float = 14.0             # days of need the generator sizes facilities by (world, not policy)
     g_median: float = 2.0
     g_sigma: float = 0.5
     pmax_range: tuple = (30.0, 120.0)
@@ -126,6 +126,14 @@ class Config:
             raise ValueError(
                 f"(C1) violated: alpha+beta+mu = {self.tie_break_max:.4f} must be < "
                 f"W[1]*psi_min = {self.W[0] * psi_min:.4f}")
+        # (C3): any core unit must beat any excess unit (psi_hat <= 1)
+        core_min = self.W[0] * psi_min - self.tie_break_max
+        if self.core_excess and not self.excess_weight * self.W[2] * 1.0 < core_min:
+            raise ValueError(
+                f"(C3) violated: excess_weight*W[3] = {self.excess_weight * self.W[2]:.2e} must be < "
+                f"W[1]*psi_min - (alpha+beta+mu) = {core_min:.4f}")
+        if len(self.usage_rates) != 3 or any(r <= 0 for r in self.usage_rates):
+            raise ValueError("usage_rates must be three positive rates")
         if self.need_clip[0] < self.m_min:
             raise ValueError("need_clip lower bound must be >= m_min")
         if self.learn_psi and not self.simulate_failures:

@@ -26,7 +26,7 @@ import pandas as pd
 from pulse import Config, Simulation, load_districts, parse_overrides
 from pulse.make_districts import make_placeholder
 
-KEY_METRICS = ["wfill_ref", "exp_fill_nonbulk", "exp_fill_overall", "fill_nonbulk", "fill_L1", "fill_L2", "fill_L3", "fill_L3_unflagged",
+KEY_METRICS = ["wneed_fill_ref", "need_fill", "wfill_ref", "exp_fill_nonbulk", "exp_fill_overall", "fill_nonbulk", "fill_L1", "fill_L2", "fill_L3", "fill_L3_honest",
                "fill_bulk", "same_state_share", "mean_km", "failed_match_share",
                "units_abandoned", "stranded_requester_rounds", "solve_seconds"]
 
@@ -50,7 +50,7 @@ def ablation_suite(base: Config, R_max: float) -> list[tuple[str, str, dict]]:
     """
     shieldnet = dict(use_psi_objective=False, learn_psi=False, W=(1.0, 2.0, 3.0),
                      alpha=1e-6 * R_max, beta=0.0, mu=0.0,
-                     hoarding_control=False, price_filter=False, cert_filter=False)
+                     core_excess=False, price_filter=False, cert_filter=False)
     steps = [
         ("0 Shield-Net", {}),
         ("1 +expected-delivery objective", dict(use_psi_objective=True)),
@@ -58,7 +58,7 @@ def ablation_suite(base: Config, R_max: float) -> list[tuple[str, str, dict]]:
         ("3 +urgency weights 1/10/100", dict(W=(1.0, 10.0, 100.0))),
         ("4 +price & certificate", dict(price_filter=True, cert_filter=True, alpha=base.alpha,
                                         beta=base.beta, mu=base.mu)),
-        ("5 +hoarding control = PULSE", dict(hoarding_control=True)),
+        ("5 +core/excess split = PULSE", dict(core_excess=True)),
     ]
     out, acc = [], dict(shieldnet)
     for label, delta in steps:
@@ -71,8 +71,7 @@ def sweeps_suite(base: Config) -> list[tuple[str, str, dict]]:
     grid = {
         "supply_scale": [0.6, 1.0, 1.5],
         "p_bulk": [0.0, 0.005, 0.02],
-        "c": [0.02, 0.05, 0.10],
-        "nu": [0.1, 0.25, 0.5],
+        "H": [7.0, 14.0, 28.0],
         "eta": [0.0, 0.5, 1.0],
         "omega": [0.0, 0.1, 0.2],
         "W": [(1.0, 10.0, 100.0), (1.0, 2.0, 3.0)],

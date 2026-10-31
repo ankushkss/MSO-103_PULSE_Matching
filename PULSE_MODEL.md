@@ -44,16 +44,19 @@ In words: send as many units as possible, most urgent first, and use distance on
 
 ### 2.1 The problem solved each round
 
+Each requester's outstanding request is split into **core** $`C_j`$ (its genuine need not yet received) and **excess** $`X_j`$ (the rest). Each allowed supplier–requester pair has a core flow $`x^c_{ij}`$ and an excess flow $`x^e_{ij}`$; the supplier ships their sum.
+
 ```math
 \begin{aligned}
-\max_x\quad & \sum_{(i,j)\in E} \big(p_j\,\hat\psi_{ij} - c_{ij}\big)\,x_{ij}\\
-\text{s.t.}\quad & \sum_j x_{ij} \le A_i && \forall i && \text{(supply)}\\
-& \sum_i x_{ij} \le \tilde D_j && \forall j && \text{(demand)}\\
-& x_{ij} \ge 0 && \forall (i,j) \in E
+\max_{x^c,\,x^e}\quad & \sum_{(i,j)\in E} \big(p_j\,\hat\psi_{ij} - c_{ij}\big)\,\big(x^c_{ij} + \varepsilon\,x^e_{ij}\big)\\
+\text{s.t.}\quad & \sum_j \big(x^c_{ij} + x^e_{ij}\big) \le A_i && \forall i && \text{(supply)}\\
+& \sum_i x^c_{ij} \le C_j && \forall j && \text{(core)}\\
+& \sum_i x^e_{ij} \le X_j && \forall j && \text{(excess)}\\
+& x^c_{ij},\ x^e_{ij} \ge 0 && \forall (i,j) \in E
 \end{aligned}
 ```
 
-Same structure as Shield-Net: one variable per supplier–requester pair, one supply limit per supplier, one demand limit per requester. What changes is what goes into it:
+Same structure as Shield-Net: flows on supplier–requester pairs, one supply limit per supplier, demand limits per requester. What changes is what goes into it:
 
 | Term | Meaning | How it is computed |
 |---|---|---|
@@ -62,9 +65,13 @@ Same structure as Shield-Net: one variable per supplier–requester pair, one su
 | $`\hat\psi_{ij}`$ | estimated probability that the match is actually delivered | $`\hat\psi_{same}`$ if supplier and requester are in the same state, else $`\hat\psi_{cross}`$ |
 | $`c_{ij}`$ | small tie-break cost | $`\tilde\alpha\,\hat c_{ij} + \beta\,\rho_{ij} + \mu\,\mathbf{1}[\kappa_j = 1](1 - q_i)`$: distance, price, uncertified stock |
 | $`A_i`$ | stock the supplier has this round | $`s_i \Delta + r_i`$: daily rate × days since the last round, plus carried stock |
-| $`\tilde D_j`$ | how much the requester may receive this round | its outstanding demand, capped if flagged as a possible hoarder |
+| $`C_j`$ | core: genuine need not yet received | $`\min\big(D_j,\ \max(0,\ \lfloor u_{\ell_j} E_j H - G_j \rfloor)\big)`$ |
+| $`X_j`$ | excess: the rest of the request | $`D_j - C_j`$ |
+| $`\varepsilon`$ | value of an excess unit relative to a core unit | $`10^{-4}`$, small enough that any core unit beats any excess unit |
 
-The objective is the **expected urgency-weighted number of units delivered**, minus small tie-break costs.
+Here $`D_j`$ is the requester's outstanding request, $`E_j`$ its staff count, $`u_{\ell}`$ the plausible usage per staff per day for its facility type, $`H`$ the number of days of need counted as genuine, and $`G_j`$ what it has received so far.
+
+The objective is the **expected urgency-weighted delivery of genuine need**, with excess served only from stock left over, by the same priorities.
 
 ### 2.2 Between rounds
 
@@ -74,7 +81,7 @@ The platform updates its success estimates from the outcomes it has observed:
 \hat\psi_g = \max\left(\psi_{floor},\ \frac{n_0\,\psi^0_g + S_g}{n_0 + S_g + F_g}\right), \qquad g \in \lbrace \text{same}, \text{cross} \rbrace
 ```
 
-where $`S_g`$ and $`F_g`$ count successful and failed matches so far. Unserved demand carries over to the next round, as in Shield-Net.
+where $`S_g`$ and $`F_g`$ count successful and failed matches so far. Delivered units are added to each requester's $`G_j`$, and unserved demand carries over to the next round, as in Shield-Net.
 
 ### 2.3 Default values
 
@@ -85,7 +92,9 @@ where $`S_g`$ and $`F_g`$ count successful and failed matches so far. Unserved d
 | $`\psi_{floor}`$ | 0.05 | keeps every pair worth serving |
 | $`W`$ | (1, 10, 100) | policy choice |
 | $`\tilde\alpha,\ \beta,\ \mu`$ | 0.002, 0.002, 0.02 | small, so they only break ties |
-| $`c`$ | 0.05 | a flagged requester gets at most 5% of the round's supply |
+| $`u_{\ell}`$ | 0.25, 0.5, 1.0 units per staff per day, levels 1/2/3 | assumed usage norm by facility type |
+| $`H`$ | 14 days | the horizon |
+| $`\varepsilon`$ | $`10^{-4}`$ | any core unit (worth at least 0.026) beats any excess unit (worth at most 0.01) |
 
 ---
 
@@ -120,16 +129,16 @@ Real values for India need real delivery records; in this project the mechanism 
 - Weights are $`W = (1, 10, 100)`$, so each level is ten times the one below.
 - Urgency always wins across levels as long as
 
-  ```math
-  W[\ell+1]\,\hat\psi_{cross} - \max c_{ij} \;>\; W[\ell]\,\hat\psi_{same} \qquad (\ell = 1, 2)
-  ```
+```math
+W[\ell+1]\,\hat\psi_{cross} - \max c_{ij} \;>\; W[\ell]\,\hat\psi_{same} \qquad (\ell = 1, 2)
+```
 
-  With the defaults: $`10 \times 0.16 - 0.024 = 1.576 > 0.40`$. The code checks this every round.
+With the defaults: $`10 \times 0.16 - 0.024 = 1.576 > 0.40`$. The code checks this every round.
 - Distance and success probability now only decide between requesters at the **same** urgency level.
 
 ### Issue 4: Price was ignored
 
-**In Shield-Net.** Price was not in the model, so a requester could be matched with a supplier it couldn't afford. The paper names this as a reason matches failed (prices ranged from \$1 to \$7).
+**In Shield-Net.** Price was not in the model, so a requester could be matched with a supplier it couldn't afford. The paper names this as a reason matches failed (prices ranged from 1 to 7 US dollars).
 
 **In PULSE.** Each requester gives a maximum unit price $`\bar\pi_j`$.
 - **Hard rule:** a pair is allowed only if $`\pi_i \le \bar\pi_j`$. Over-budget pairs are not in $`E`$.
@@ -156,24 +165,30 @@ Real values for India need real delivery records; in this project the mechanism 
 
 ### Issue 7: One requester could take everything
 
-**In Shield-Net.** No protection. One request for 5 million shields, 50 times larger than any other, had to be removed by hand.
+**In Shield-Net.** No protection. One request for 5 million shields, 50 times larger than any other, had to be removed by hand. More generally, any requester that asked for more than it needed could take stock that others genuinely needed, as long as it was urgent enough.
 
-**In PULSE.**
-- **Flag** a request that is implausible for the facility's size:
+**In PULSE.** Each request is split into what the facility plausibly needs and the rest:
+- **Genuine need** over the horizon is estimated from facility type and size: $`N_j = u_{\ell_j} \cdot E_j \cdot H`$. For example, a COVID ward with 50 staff needs about $`1.0 \times 50 \times 14 = 700`$ shields over two weeks.
+- **Core** is the part of the request within that need, minus what the requester has already received:
 
-  ```math
-  z_j = \mathbf{1}\big[D^0_j > u \cdot \text{size}_j \cdot T^{cov}\big]
-  ```
+```math
+C_j = \min\big(D_j,\ \max(0,\ \lfloor N_j - G_j \rfloor)\big), \qquad X_j = D_j - C_j
+```
 
-  That is, more than its staff could use in 14 days at 0.5 units per person per day.
-- **Cap** a flagged requester's demand in the model:
+- **Core comes first.** Core and excess have separate demand rows, and an excess unit is worth only $`\varepsilon`$ times the same unit as core. By the condition
 
-  ```math
-  \tilde D_j = \min\big(D_j,\ \max(\lfloor c\,A^{tot} \rfloor,\ m_{min})\big)
-  ```
+```math
+\varepsilon \cdot W[3] \;<\; W[1]\,\psi_{floor} - \max c_{ij}
+```
 
-  It can receive at most 5% of the round's supply.
-- The demand above the cap is **deferred, not deleted**: it stays outstanding, and the cap lifts once the requester is verified. A flag means "unverified", not "guilty".
+any core unit is worth more than any excess unit (defaults: $`0.01 < 0.026`$). So no supplier ever ships excess while a requester it can serve still has core left.
+
+Three consequences:
+- **Nothing is cut.** A requester can still receive its whole request; the excess just waits behind everyone's core, and is served from what is left, by the same priorities.
+- **Inflating a request gains nothing.** $`N_j`$ depends only on facility type and size, so asking for more only adds excess, never core.
+- **Being served shrinks the core.** Receipts $`G_j`$ count against the need, so a requester that has already been served comes back mostly as excess.
+
+The 5-million request from the paper would have had a core equal to what its hospitals' staff could plausibly use in two weeks. Everything beyond that would have been served only from leftover stock, after every other requester's genuine need.
 
 ### Issue 8: Supply did not reflect time or leftover stock
 
@@ -195,9 +210,9 @@ A_i = s_i\,\Delta + r_i
 **In PULSE.**
 - Distance is the **road distance between Indian districts**, from an 800 × 800 matrix, scaled by the longest distance:
 
-  ```math
-  \hat c_{ij} = \frac{R[k(i),\,k(j)]}{R_{max}} \in (0, 1]
-  ```
+```math
+\hat c_{ij} = \frac{R[k(i),\,k(j)]}{R_{max}} \in (0, 1]
+```
 
 - Within a district, the distance is 10–20 km rather than 0.
 - A pair with no road distance in the data is not in $`E`$.
@@ -207,13 +222,15 @@ A_i = s_i\,\Delta + r_i
 
 ## 4. What stays the same
 
-- **Still a linear program.** Every change above alters only the objective coefficients, which pairs are allowed, or the right-hand sides. The constraint matrix keeps Shield-Net's form: each variable appears in exactly one supply row and one demand row. It is therefore totally unimodular, so with integer stock and demand the LP's solution is automatically whole units. Each round solves exactly, in about a second.
+- **Still a linear program.** Every change above alters only the objective coefficients, which pairs are allowed, the right-hand sides, and one extra demand row per requester. Each variable still appears in exactly one supply row and exactly one demand row (core or excess). The constraint matrix is therefore totally unimodular, so with integer stock, core and excess the LP's solution is automatically whole units. Each round solves exactly, in about half a second.
 - **Every allowed pair is worth serving.** Every coefficient $`p_j\,\hat\psi_{ij} - c_{ij}`$ is positive, because $`\tilde\alpha + \beta + \mu = 0.024 < 1 \times \psi_{floor} = 0.05`$. So the model never leaves a supplier with stock unused next to a requester it could serve.
-- **Shield-Net is a special case.** Set $`\hat\psi = 1`$, $`W = (1,2,3)`$, $`\beta = \mu = 0`$, no cap and no price or certificate rules, and PULSE gives exactly Shield-Net's answer. This was checked numerically.
+- **Shield-Net is a special case.** Set $`\hat\psi = 1`$, $`W = (1,2,3)`$, $`\beta = \mu = 0`$, treat the whole request as core, and drop the price and certificate rules, and PULSE gives exactly Shield-Net's answer. This was checked numerically.
 
 ---
 
 ## 5. What the model does not handle
 
 - **Supplier minimum order quantities.** The paper names them as a problem, but enforcing them needs yes/no variables, which would make each round an integer program. Left as a stated limitation.
+- **Genuine need is an estimate.** It rests on assumed usage rates per facility type and on truthful staff counts. A facility that really uses more than its type's norm is still served in full eventually; the part above the norm just waits behind others' core.
+- **Excess is shared by priority, not proportionally.** Leftover stock goes to excess in the same urgency and locality order as core, rather than giving every requester the same number of days of buffer stock.
 - **Outcomes are not decided by the model.** Whether a match succeeds, whether a requester refuses it, whether a requester gives up, and how much unsold stock survives are all part of the **simulation** used to test PULSE. They are not part of the optimisation; see `README.md`.

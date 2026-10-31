@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 import numpy as np
 
@@ -29,21 +28,21 @@ class Simulation:
         streams = make_streams(seed)
         self.inst = instance if instance is not None else generate_instance(cfg, districts, seed, streams)
         # Common random numbers: one pre-drawn uniform per (round, supplier, requester)
-        # for match outcomes, and per (round, requester) for abandonment and verification.
-        # A given match, exit or verification then turns out the same under every
+        # for match outcomes, and per (round, requester) for abandonment.
+        # A given match or exit then turns out the same under every
         # policy, so paired comparisons differ only because the decisions differ.
         T = cfg.n_rounds
         nS, nR = self.inst.n_suppliers, self.inst.n_requesters
         self.U_out = streams["outcomes"].random((T, nS, nR), dtype=np.float32)
         self.U_ab = streams["abandonment"].random((T, nR))
-        self.U_ver = streams["verification"].random((T, nR))
 
         inst = self.inst
         self.r = np.zeros(inst.n_suppliers, dtype=np.int64)          # carried stock
         self.carry = np.zeros(inst.n_requesters, dtype=np.int64)     # outstanding demand
         self.status = np.full(inst.n_requesters, PENDING, dtype=np.int8)
-        self.z = np.zeros(inst.n_requesters, dtype=bool)             # plausibility flag
-        self.ever_flagged = np.zeros(inst.n_requesters, dtype=bool)
+        # genuine need over H days for a facility of this type and size
+        self.need = inst.r_usage * inst.r_size * cfg.H
+        self.over_asker = inst.r_D0 > self.need                      # request above plausible need
         self.delivered = np.zeros(inst.n_requesters, dtype=np.int64)
         self.abandoned_units = np.zeros(inst.n_requesters, dtype=np.int64)
         self.S = np.zeros(2, dtype=np.int64)                          # successes by class
@@ -84,23 +83,22 @@ class Simulation:
         A = inst.s_rate[sup] * gap + self.r[sup]
         A_tot = int(A.sum())
 
-        # arrivals and plausibility flags
+        # arrivals
         new = np.nonzero(inst.r_arrival == tau)[0]
         self.status[new] = ACTIVE
         self.carry[new] = inst.r_D0[new]
-        if cfg.hoarding_control:
-            self.z[new] = inst.r_D0[new] > inst.r_P[new]
-            self.ever_flagged[new] |= self.z[new]
 
         # 3. outstanding demand
         req = np.nonzero(self.status == ACTIVE)[0]
         D = self.carry[req].copy()
 
-        # 5. share cap
-        cap = max(int(math.floor(cfg.c * A_tot)), cfg.m_min)
-        flagged = self.z[req]
-        Dt = np.where(flagged, np.minimum(D, cap), D)
-        capped = Dt < D
+        # 4. split into core (genuine need not yet received) and excess (the rest)
+        if cfg.core_excess:
+            room = np.maximum(0, np.floor(self.need[req] - self.delivered[req] + 1e-9)).astype(np.int64)
+            C = np.minimum(D, room)
+        else:
+            C = D.copy()
+        X = D - C
 
         # beliefs
         psi = self.psi_hat()
@@ -150,9 +148,7 @@ class Simulation:
         wvec = self.W[level - 1] * psi[cls] - cvec
         if cfg.check_invariants and len(wvec):
             assert (wvec > 0).all(), "(C1) violated: an edge has non-positive value"
-        xbar = np.minimum(A[ei], Dt[ej])
-
-        P = RoundProblem(e_sup=ei, e_req=ej, w=wvec, xbar=xbar, A=A, Dt=Dt)
+        P = RoundProblem(e_sup=ei, e_req=ej, w=wvec, A=A, C=C, X=X, eps=cfg.excess_weight)
         sol = solve_round(P, solver=cfg.solver)
         x = sol.x
 
@@ -184,8 +180,10 @@ class Simulation:
         sup_deliv = np.bincount(ei, weights=deliv, minlength=nS).astype(np.int64)
         req_deliv = np.bincount(ej, weights=deliv, minlength=nR).astype(np.int64)
 
+        core_alloc = np.bincount(ej, weights=sol.xc, minlength=nR).astype(np.int64)
+        exc_alloc = np.bincount(ej, weights=sol.xe, minlength=nR).astype(np.int64)
         if cfg.check_invariants:
-            self._check(tau, A, Dt, ei, ej, sup_alloc, req_alloc, flagged, cap)
+            self._check(tau, A, C, X, ei, ej, sol.xe, sup_alloc, core_alloc, exc_alloc)
 
         # 8.3 suppliers: leakage and storage cap
         unsold = A - sup_deliv
@@ -208,12 +206,6 @@ class Simulation:
         self.abandoned_units[gone] = self.carry[gone]
         self.status[gone] = ABANDONED
 
-        # 8.6 verification
-        remain = act[~leave]
-        fl = remain[self.z[remain]]
-        ver = self.U_ver[tau - 1, fl] < cfg.nu
-        self.z[fl[ver]] = False
-
         # logging
         self.matches.add(tau=tau, sup=sup[ei[matched]], req=req[ej[matched]],
                          x=x[matched], delivered=deliv[matched], km=Rk[matched],
@@ -224,23 +216,30 @@ class Simulation:
                          # expected-delivery weight: 0 for a refused match
                          psi_true=np.asarray(cfg.psi_true)[cls[matched]] * ~refused[matched])
         return round_record(
-            sim=self, tau=tau, A_tot=A_tot, D=D, Dt=Dt, req=req, n_sup=nS, cap=cap,
-            flagged=flagged, capped=capped, x=x, deliv=deliv, matched=matched, B=B,
+            sim=self, tau=tau, A_tot=A_tot, D=D, C=C, X=X, req=req, n_sup=nS,
+            core_alloc=core_alloc, exc_alloc=exc_alloc, x=x, deliv=deliv, matched=matched, B=B,
             psi=psi, c2_ok=c2_ok, sol=sol, n_edges=len(x), stranded=stranded, refused=refused,
             n_stranded=n_stranded, leaked=leaked, lost_storage=lost_storage,
             n_new=len(new), n_served=int(served.sum()), n_abandoned=int(leave.sum()),
-            units_abandoned=int(self.abandoned_units[gone].sum()), n_verified=int(ver.sum()),
+            units_abandoned=int(self.abandoned_units[gone].sum()),
             same=same, Rk=Rk, cls=cls)
 
     # ------------------------------------------------------------------
-    def _check(self, tau, A, Dt, ei, ej, sup_alloc, req_alloc, flagged, cap):
+    def _check(self, tau, A, C, X, ei, ej, xe, sup_alloc, core_alloc, exc_alloc):
         """README Section 7 properties, asserted every round."""
         assert (sup_alloc <= A).all(), f"round {tau}: supplier allocated beyond stock"
-        assert (req_alloc <= Dt).all(), f"round {tau}: requester allocated beyond D~"
-        assert (req_alloc[flagged] <= cap).all(), f"round {tau}: share cap broken"
-        if len(ei):                                                    # README 7.1
-            bad = ((A - sup_alloc)[ei] > 0) & ((Dt - req_alloc)[ej] > 0)
+        assert (core_alloc <= C).all(), f"round {tau}: core allocated beyond core demand"
+        assert (exc_alloc <= X).all(), f"round {tau}: excess allocated beyond excess demand"
+        if len(ei):
+            core_open = (C - core_alloc)[ej] > 0
+            open_ = core_open | ((X - exc_alloc)[ej] > 0)
+            # 7.1: no edge left idle with stock on one side and demand on the other
+            bad = ((A - sup_alloc)[ei] > 0) & open_
             assert not bad.any(), f"round {tau}: an edge with stock and demand left idle"
+            # 7.4: a supplier ships excess only if none of its requesters has core left
+            ships_excess = np.bincount(ei, weights=xe, minlength=len(A)) > 0
+            bad = ships_excess[ei] & core_open
+            assert not bad.any(), f"round {tau}: excess served while reachable core was unmet"
 
 
 def run_simulation(cfg: Config, districts: Districts, seed: int) -> tuple[list[dict], dict]:

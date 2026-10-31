@@ -41,8 +41,8 @@ def _agg(df, by, metrics):
 
 
 def plot_ablation(runs: pd.DataFrame, out: str) -> str:
-    metrics = [("wfill_ref", "urgency-weighted fill"), ("fill_nonbulk", "non-bulk fill"),
-               ("fill_L3_unflagged", "level-3 fill (unflagged)")]
+    metrics = [("wneed_fill_ref", "urgency-weighted need met"), ("need_fill", "need met"),
+               ("fill_L3_honest", "level-3 fill (honest requests)")]
     mean, err = _agg(runs, "config", [m for m, _ in metrics])
     labels = list(mean.index)
     y = np.arange(len(labels))
@@ -71,11 +71,11 @@ def plot_sweeps(runs: pd.DataFrame, out: str) -> str:
     fig, axes = plt.subplots(rows, cols, figsize=(3.0 * cols, 2.4 * rows), squeeze=False)
     for ax, g in zip(axes.flat, groups):
         sub = runs[runs["group"] == g]
-        mean, err = _agg(sub, "config", ["wfill_ref", "fill_nonbulk"])
+        mean, err = _agg(sub, "config", ["wneed_fill_ref", "need_fill"])
         labels = [c.split("=", 1)[1] for c in mean.index]
         x = np.arange(len(labels))
-        for k, (m, name) in enumerate([("wfill_ref", "urgency-weighted fill"),
-                                       ("fill_nonbulk", "non-bulk fill")]):
+        for k, (m, name) in enumerate([("wneed_fill_ref", "urgency-weighted need met"),
+                                       ("need_fill", "need met")]):
             ax.errorbar(x, mean[m], yerr=err[m], color=SERIES[k], lw=2, marker="o", ms=5,
                         capsize=2, label=name)
         ax.set_xticks(x, labels)

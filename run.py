@@ -22,7 +22,8 @@ DEFAULT_DATA = "data/districts.xlsx"
 
 ROUND_COLS = ["round", "day", "suppliers_active", "requesters_active", "A_tot", "D_tot",
               "supply_demand_ratio", "edges", "allocated", "delivered", "failed_matches",
-              "flagged", "capped", "stranded", "psi_hat_same", "psi_hat_cross",
+              "core_demand", "excess_demand", "core_allocated", "excess_allocated", "stranded",
+              "psi_hat_same", "psi_hat_cross",
               "solve_seconds"]
 
 

@@ -39,8 +39,8 @@ class Instance:
     r_arrival: np.ndarray
     r_level: np.ndarray       # 1/2/3
     r_D0: np.ndarray
-    r_size: np.ndarray
-    r_P: np.ndarray           # plausible need
+    r_size: np.ndarray        # staff count (or beds)
+    r_usage: np.ndarray       # plausible units per staff per day, by facility type
     r_pmax: np.ndarray
     r_kappa: np.ndarray       # 0/1/2
     r_var: np.ndarray
@@ -96,8 +96,8 @@ def generate_instance(cfg: Config, districts: Districts, seed: int,
     need = np.rint(rr.lognormal(np.log(cfg.need_median), cfg.need_sigma, size=M))
     need = np.clip(need, max(cfg.need_clip[0], cfg.m_min), cfg.need_clip[1]).astype(np.int64)
     g = rr.lognormal(np.log(cfg.g_median), cfg.g_sigma, size=M)
-    size = np.maximum(1, np.ceil(need * g / (cfg.u * cfg.T_cov))).astype(np.int64)
-    P = cfg.u * size * cfg.T_cov
+    usage = np.asarray(cfg.usage_rates, dtype=float)[level - 1]
+    size = np.maximum(1, np.ceil(need * g / (usage * cfg.need_days))).astype(np.int64)
     bulk = rr.random(M) < cfg.p_bulk
     bulk_size = np.rint(rr.uniform(*cfg.bulk_range, size=M) * A_bar1).astype(np.int64)
     D0 = np.where(bulk, np.maximum(bulk_size, cfg.m_min), need).astype(np.int64)
@@ -114,6 +114,6 @@ def generate_instance(cfg: Config, districts: Districts, seed: int,
         s_dist=sdist, s_enrol=enrol.astype(np.int64), s_class=cls, s_rate=rate.astype(np.int64),
         s_price=price, s_cert=cert, s_var=svar.astype(np.int64),
         r_dist=rdist, r_arrival=arrival.astype(np.int64), r_level=level.astype(np.int64),
-        r_D0=D0, r_size=size, r_P=P, r_pmax=pmax, r_kappa=kappa,
+        r_D0=D0, r_size=size, r_usage=usage, r_pmax=pmax, r_kappa=kappa,
         r_var=rvar.astype(np.int64), r_bulk=bulk, A_bar1=float(A_bar1),
     )

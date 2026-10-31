@@ -45,10 +45,10 @@ def _ratio(a, b):
     return float(a) / float(b) if b else float("nan")
 
 
-def round_record(*, sim: "Simulation", tau, A_tot, D, Dt, req, n_sup, cap, flagged, capped,
+def round_record(*, sim: "Simulation", tau, A_tot, D, C, X, req, n_sup, core_alloc, exc_alloc,
                  x, deliv, matched, B, psi, c2_ok, sol, n_edges, stranded, n_stranded, refused,
                  leaked, lost_storage, n_new, n_served, n_abandoned, units_abandoned,
-                 n_verified, same, Rk, cls) -> dict:
+                 same, Rk, cls) -> dict:
     alloc = int(x.sum())
     D_tot = int(D.sum())
     rec = {
@@ -61,10 +61,12 @@ def round_record(*, sim: "Simulation", tau, A_tot, D, Dt, req, n_sup, cap, flagg
         "A_tot": A_tot,
         "D_tot": D_tot,
         "supply_demand_ratio": _ratio(A_tot, D_tot),
-        "cap": cap,
-        "flagged": int(flagged.sum()),
-        "capped": int(capped.sum()),
-        "units_deferred_by_cap": int((D - Dt)[capped].sum()),
+        "core_demand": int(C.sum()),
+        "excess_demand": int(X.sum()),
+        "core_supply_ratio": _ratio(A_tot, int(C.sum())),
+        "core_allocated": int(core_alloc.sum()),
+        "excess_allocated": int(exc_alloc.sum()),
+        "requesters_with_excess": int((X > 0).sum()),
         "edges": n_edges,
         "matches": int(matched.sum()),
         "allocated": alloc,
@@ -84,7 +86,6 @@ def round_record(*, sim: "Simulation", tau, A_tot, D, Dt, req, n_sup, cap, flagg
         "served": n_served,
         "abandoned": n_abandoned,
         "units_abandoned": units_abandoned,
-        "verified": n_verified,
         "leaked_stock": leaked,
         "stock_lost_to_storage_cap": lost_storage,
         "stranded": n_stranded,
@@ -118,12 +119,20 @@ def run_summary(sim: "Simulation") -> dict:
     for l in (1, 2, 3):
         sel = nonbulk & (lvl == l)
         out[f"fill_L{l}"] = _ratio(got[sel].sum(), D0[sel].sum())
-    sel = nonbulk & (lvl == 3) & ~sim.ever_flagged
-    out["fill_L3_unflagged"] = _ratio(got[sel].sum(), D0[sel].sum())
+    sel = nonbulk & (lvl == 3) & ~sim.over_asker
+    out["fill_L3_honest"] = _ratio(got[sel].sum(), D0[sel].sum())
     wts = REF_W[lvl - 1]
     out["wfill_ref"] = _ratio((wts * got)[nonbulk].sum(), (wts * D0)[nonbulk].sum())
+    # Need-based fill: deliveries counted only up to each facility's genuine need over the
+    # horizon (fixed world quantity, independent of the policy's H), all requesters incl. bulk.
+    need = inst.r_usage * inst.r_size * cfg.need_days
+    genuine = np.minimum(D0, need)
+    met = np.minimum(got, genuine)
+    out["need_fill"] = _ratio(met[arrived].sum(), genuine[arrived].sum())
+    out["wneed_fill_ref"] = _ratio((wts * met)[arrived].sum(), (wts * genuine)[arrived].sum())
+    out["excess_received"] = int(np.maximum(0, got - genuine)[arrived].sum())
     out["served_share_nonbulk"] = _ratio(((sim.status == 2) & nonbulk).sum(), nonbulk.sum())
-    out["flagged_ever"] = int(sim.ever_flagged.sum())
+    out["over_askers"] = int((sim.over_asker & arrived).sum())
     out["units_abandoned"] = int(sim.abandoned_units.sum())
     out["outstanding_end"] = int(sim.carry[sim.status == 1].sum())
 
