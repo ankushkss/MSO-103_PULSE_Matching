@@ -96,13 +96,13 @@ def plot_learning(runs: pd.DataFrame, rounds: pd.DataFrame, out: str) -> list[st
     paths = []
     runs = runs.copy()
     runs["learn"] = runs["config"].str.endswith("learn=on")
-    mean, err = _agg(runs, ["group", "learn"], ["exp_fill_overall"])
+    mean, err = _agg(runs, ["group", "learn"], ["exp_fill_nonbulk"])
     groups = list(dict.fromkeys(runs["group"]))
     x = np.arange(len(groups))
     fig, ax = plt.subplots(figsize=(8, 3.2))
     for k, learn in enumerate([False, True]):
-        m = [mean.loc[(g, learn), "exp_fill_overall"] for g in groups]
-        e = [err.loc[(g, learn), "exp_fill_overall"] for g in groups]
+        m = [mean.loc[(g, learn), "exp_fill_nonbulk"] for g in groups]
+        e = [err.loc[(g, learn), "exp_fill_nonbulk"] for g in groups]
         ax.bar(x + (k - 0.5) * 0.38, m, width=0.36, yerr=e, color=SERIES[k],
                label="learning on" if learn else "learning off (prior only)",
                error_kw=dict(ecolor=INK_2, lw=0.8, capsize=2))

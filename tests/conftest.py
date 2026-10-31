@@ -25,4 +25,4 @@ def districts(small_xlsx):
 @pytest.fixture
 def small_cfg():
     # A small instance so every test runs in seconds.
-    return Config(n_suppliers=60, arrivals_1=25, time_limit=10, candidate_k=0)
+    return Config(n_suppliers=60, arrivals_1=25)

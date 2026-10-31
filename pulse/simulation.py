@@ -16,7 +16,7 @@ log = logging.getLogger("pulse")
 
 PENDING, ACTIVE, SERVED, ABANDONED = 0, 1, 2, 3
 SAME, CROSS = 0, 1
-STRAND_CAUSES = ("variant", "price", "certificate", "distance", "no_stock", "min_order")
+STRAND_CAUSES = ("variant", "price", "certificate", "distance", "no_stock")
 
 
 class Simulation:
@@ -28,9 +28,15 @@ class Simulation:
         self.seed = seed
         streams = make_streams(seed)
         self.inst = instance if instance is not None else generate_instance(cfg, districts, seed, streams)
-        self.rng_out = streams["outcomes"]
-        self.rng_ab = streams["abandonment"]
-        self.rng_ver = streams["verification"]
+        # Common random numbers: one pre-drawn uniform per (round, supplier, requester)
+        # for match outcomes, and per (round, requester) for abandonment and verification.
+        # A given match, exit or verification then turns out the same under every
+        # policy, so paired comparisons differ only because the decisions differ.
+        T = cfg.n_rounds
+        nS, nR = self.inst.n_suppliers, self.inst.n_requesters
+        self.U_out = streams["outcomes"].random((T, nS, nR), dtype=np.float32)
+        self.U_ab = streams["abandonment"].random((T, nR))
+        self.U_ver = streams["verification"].random((T, nR))
 
         inst = self.inst
         self.r = np.zeros(inst.n_suppliers, dtype=np.int64)          # carried stock
@@ -72,7 +78,6 @@ class Simulation:
     def _round(self, tau: int) -> dict:
         cfg, inst, d = self.cfg, self.inst, self.d
         gap = cfg.gaps[tau - 1]
-        mode_b = cfg.enforce_min_shipment
 
         # 1-2. enrolment and supply
         sup = np.nonzero(inst.s_enrol <= tau)[0]
@@ -115,11 +120,6 @@ class Simulation:
         dist_ok = np.isfinite(Rsub) & (Rsub <= cfg.delta_max)
         stock_ok = np.broadcast_to((A > 0)[:, None], ones.shape)
         elig = compat & price_ok & cert_ok & dist_ok & stock_ok
-        if mode_b:
-            moq_ok = np.minimum(A[:, None], Dt[None, :]) >= inst.s_moq[sup][:, None]
-            elig_final = elig & moq_ok
-        else:
-            elig_final = elig
 
         # stranded requesters, by first failing filter
         stranded = {c: 0 for c in STRAND_CAUSES}
@@ -127,17 +127,15 @@ class Simulation:
             chain = [compat, price_ok, cert_ok, dist_ok, stock_ok]
             cum = np.ones(len(req), dtype=bool) & (len(sup) > 0)
             m = ones
-            has_edge = elig_final.any(axis=0) if len(sup) else np.zeros(len(req), bool)
-            for cause, f in zip(STRAND_CAUSES[:5], chain):
+            has_edge = elig.any(axis=0) if len(sup) else np.zeros(len(req), bool)
+            for cause, f in zip(STRAND_CAUSES, chain):
                 m = m & f
                 ok_now = m.any(axis=0) if len(sup) else np.zeros(len(req), bool)
                 stranded[cause] += int((cum & ~ok_now & ~has_edge).sum())
                 cum = cum & ok_now
-            if mode_b:
-                stranded["min_order"] += int((cum & ~has_edge).sum())
         n_stranded = sum(stranded.values())
 
-        ei, ej = np.nonzero(elig_final)
+        ei, ej = np.nonzero(elig)
 
         # 7. coefficients and bounds
         Rk = Rsub[ei, ej]
@@ -153,13 +151,9 @@ class Simulation:
         if cfg.check_invariants and len(wvec):
             assert (wvec > 0).all(), "(C1) violated: an edge has non-positive value"
         xbar = np.minimum(A[ei], Dt[ej])
-        moq = inst.s_moq[sup][ei]
 
-        P = RoundProblem(e_sup=ei, e_req=ej, w=wvec, xbar=xbar, moq=moq,
-                         A=A, Dt=Dt, D=D, m_min=cfg.m_min)
-        sol = solve_round(P, mode_b, solver=cfg.solver, time_limit=cfg.time_limit,
-                          compute_bound=cfg.compute_bound, gap_rel=cfg.gap_rel,
-                          candidate_k=cfg.candidate_k)
+        P = RoundProblem(e_sup=ei, e_req=ej, w=wvec, xbar=xbar, A=A, Dt=Dt)
+        sol = solve_round(P, solver=cfg.solver)
         x = sol.x
 
         # 8.1 realise matches (outcomes from the TRUE psi, never psi_hat)
@@ -167,8 +161,14 @@ class Simulation:
         B = np.ones(len(x), dtype=bool)
         if cfg.simulate_failures and matched.any():
             psi_true = np.asarray(cfg.psi_true)
-            draws = self.rng_out.random(int(matched.sum()))
+            draws = self.U_out[tau - 1, sup[ei[matched]], req[ej[matched]]]
             B[matched] = draws < psi_true[cls[matched]]
+        # A requester refuses stock above its budget, or uncertified stock when it
+        # requires certification. This is part of the world, so it applies even when
+        # the model's own filters are switched off (e.g. the Shield-Net baseline).
+        refused = matched & ((inst.s_price[sup][ei] > inst.r_pmax[req][ej])
+                             | ((inst.r_kappa[req][ej] == 2) & ~inst.s_cert[sup][ei]))
+        B[refused] = False
         deliv = np.where(B, x, 0)
 
         # 8.2 learn (counts matches, not units)
@@ -185,8 +185,7 @@ class Simulation:
         req_deliv = np.bincount(ej, weights=deliv, minlength=nR).astype(np.int64)
 
         if cfg.check_invariants:
-            self._check(tau, mode_b, x, moq, matched, A, Dt, D, ei, ej, sup_alloc, req_alloc,
-                        flagged, cap)
+            self._check(tau, A, Dt, ei, ej, sup_alloc, req_alloc, flagged, cap)
 
         # 8.3 suppliers: leakage and storage cap
         unsold = A - sup_deliv
@@ -201,13 +200,10 @@ class Simulation:
         self.delivered[req] += req_deliv
         served = self.carry[req] == 0
         self.status[req[served]] = SERVED
-        if cfg.check_invariants and mode_b:
-            still = self.carry[req[~served]]
-            assert (still >= cfg.m_min).all(), "Mode B carry invariant (README 7.4) broken"
 
         # 8.5 abandonment
         act = req[~served]
-        leave = self.rng_ab.random(len(act)) < cfg.omega
+        leave = self.U_ab[tau - 1, act] < cfg.omega
         gone = act[leave]
         self.abandoned_units[gone] = self.carry[gone]
         self.status[gone] = ABANDONED
@@ -215,7 +211,7 @@ class Simulation:
         # 8.6 verification
         remain = act[~leave]
         fl = remain[self.z[remain]]
-        ver = self.rng_ver.random(len(fl)) < cfg.nu
+        ver = self.U_ver[tau - 1, fl] < cfg.nu
         self.z[fl[ver]] = False
 
         # logging
@@ -225,32 +221,26 @@ class Simulation:
                          same_district=(sd[ei] == rd[ej])[matched],
                          price=inst.s_price[sup][ei][matched], cert=q[matched],
                          kappa=kap[matched], level=level[matched],
-                         psi_true=np.asarray(cfg.psi_true)[cls[matched]])
+                         # expected-delivery weight: 0 for a refused match
+                         psi_true=np.asarray(cfg.psi_true)[cls[matched]] * ~refused[matched])
         return round_record(
             sim=self, tau=tau, A_tot=A_tot, D=D, Dt=Dt, req=req, n_sup=nS, cap=cap,
             flagged=flagged, capped=capped, x=x, deliv=deliv, matched=matched, B=B,
-            psi=psi, c2_ok=c2_ok, sol=sol, n_edges=len(x), stranded=stranded,
+            psi=psi, c2_ok=c2_ok, sol=sol, n_edges=len(x), stranded=stranded, refused=refused,
             n_stranded=n_stranded, leaked=leaked, lost_storage=lost_storage,
             n_new=len(new), n_served=int(served.sum()), n_abandoned=int(leave.sum()),
             units_abandoned=int(self.abandoned_units[gone].sum()), n_verified=int(ver.sum()),
             same=same, Rk=Rk, cls=cls)
 
     # ------------------------------------------------------------------
-    def _check(self, tau, mode_b, x, moq, matched, A, Dt, D, ei, ej, sup_alloc, req_alloc,
-               flagged, cap):
+    def _check(self, tau, A, Dt, ei, ej, sup_alloc, req_alloc, flagged, cap):
+        """README Section 7 properties, asserted every round."""
         assert (sup_alloc <= A).all(), f"round {tau}: supplier allocated beyond stock"
         assert (req_alloc <= Dt).all(), f"round {tau}: requester allocated beyond D~"
         assert (req_alloc[flagged] <= cap).all(), f"round {tau}: share cap broken"
-        if mode_b:
-            assert (x[matched] >= moq[matched]).all(), f"round {tau}: minimum order broken"
-            rem = D - req_alloc
-            assert ((rem == 0) | (rem >= self.cfg.m_min)).all(), f"round {tau}: tiny remainder"
-        else:
-            res_s = A - sup_alloc
-            res_d = Dt - req_alloc
-            if len(ei):
-                bad = (res_s[ei] > 0) & (res_d[ej] > 0)
-                assert not bad.any(), f"round {tau}: Mode A left a usable edge idle (README 7.1)"
+        if len(ei):                                                    # README 7.1
+            bad = ((A - sup_alloc)[ei] > 0) & ((Dt - req_alloc)[ej] > 0)
+            assert not bad.any(), f"round {tau}: an edge with stock and demand left idle"
 
 
 def run_simulation(cfg: Config, districts: Districts, seed: int) -> tuple[list[dict], dict]:

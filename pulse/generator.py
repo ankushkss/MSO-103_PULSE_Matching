@@ -31,7 +31,6 @@ class Instance:
     s_enrol: np.ndarray
     s_class: np.ndarray
     s_rate: np.ndarray        # units per day
-    s_moq: np.ndarray
     s_price: np.ndarray
     s_cert: np.ndarray        # bool
     s_var: np.ndarray         # variant bitmask
@@ -75,7 +74,6 @@ def generate_instance(cfg: Config, districts: Districts, seed: int,
     lo = np.array([r[0] for r in cfg.s_ranges])[cls]
     hi = np.array([r[1] for r in cfg.s_ranges])[cls]
     rate = rs.integers(lo, hi + 1)
-    moq = np.asarray(cfg.m_by_class, dtype=np.int64)[cls]
     price = rs.uniform(*cfg.price_range, size=N) * np.asarray(cfg.price_mult)[cls]
     cert = rs.random(N) < np.asarray(cfg.cert_probs)[cls]
     svar = rs.choice([ASSEMBLED, KIT, BOTH], size=N,
@@ -114,7 +112,7 @@ def generate_instance(cfg: Config, districts: Districts, seed: int,
 
     return Instance(
         s_dist=sdist, s_enrol=enrol.astype(np.int64), s_class=cls, s_rate=rate.astype(np.int64),
-        s_moq=moq, s_price=price, s_cert=cert, s_var=svar.astype(np.int64),
+        s_price=price, s_cert=cert, s_var=svar.astype(np.int64),
         r_dist=rdist, r_arrival=arrival.astype(np.int64), r_level=level.astype(np.int64),
         r_D0=D0, r_size=size, r_P=P, r_pmax=pmax, r_kappa=kappa,
         r_var=rvar.astype(np.int64), r_bulk=bulk, A_bar1=float(A_bar1),

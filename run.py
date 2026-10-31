@@ -1,8 +1,8 @@
 """Run one PULSE simulation and print what happened round by round.
 
 Examples:
-    python run.py                         # Mode A, seed 1, placeholder data
-    python run.py --mode B --seed 3
+    python run.py                         # seed 1, placeholder data
+    python run.py --seed 3
     python run.py --data path/to/real.xlsx --set c=0.1 --set "W=(1,2,3)"
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ DEFAULT_DATA = "data/districts.xlsx"
 
 ROUND_COLS = ["round", "day", "suppliers_active", "requesters_active", "A_tot", "D_tot",
               "supply_demand_ratio", "edges", "allocated", "delivered", "failed_matches",
-              "flagged", "capped", "stranded", "psi_hat_same", "psi_hat_cross", "gap",
+              "flagged", "capped", "stranded", "psi_hat_same", "psi_hat_cross",
               "solve_seconds"]
 
 
@@ -38,7 +38,6 @@ def ensure_data(path: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default=DEFAULT_DATA, help="district workbook (README 2.1)")
-    ap.add_argument("--mode", choices=["A", "B"], default="A", help="A = LP, B = minimum orders (MILP)")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                     help="override any Config field, e.g. --set c=0.1 (repeatable)")
@@ -49,7 +48,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING,
                         format="%(levelname)s %(message)s")
 
-    cfg = parse_overrides(Config(data_path=a.data, enforce_min_shipment=(a.mode == "B")), a.set)
+    cfg = parse_overrides(Config(data_path=a.data), a.set)
     ensure_data(cfg.data_path)
     districts = load_districts(cfg.data_path, cfg.district_seed, cfg.r_intra_range)
 
@@ -66,7 +65,7 @@ def main() -> None:
 
     pd.set_option("display.width", 200)
     pd.set_option("display.max_columns", 30)
-    print(f"\nPULSE  mode {cfg.mode}  seed {a.seed}  districts {districts.K}  "
+    print(f"\nPULSE  seed {a.seed}  districts {districts.K}  "
           f"suppliers {sim.inst.n_suppliers}  requesters {sim.inst.n_requesters}\n")
     print(rdf[ROUND_COLS].round(3).to_string(index=False))
     print("\nSummary")

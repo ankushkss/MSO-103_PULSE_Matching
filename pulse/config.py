@@ -26,7 +26,7 @@ class Config:
 
     # ---------------- policy ----------------
     W: tuple = (1.0, 10.0, 100.0)       # urgency weights for levels 1/2/3
-    m_min: int = 50                     # platform minimum request size
+    m_min: int = 50                     # platform minimum request size; also the floor of the cap
     c: float = 0.05                     # share cap for flagged requesters
     alpha: float = 0.002                # distance tie-break weight (alpha-tilde)
     beta: float = 0.002                 # price tie-break weight
@@ -50,7 +50,6 @@ class Config:
     omega: float = 0.10                 # abandonment probability per round
 
     # ---------------- switches ----------------
-    enforce_min_shipment: bool = False  # False = Mode A (LP), True = Mode B (MILP)
     simulate_failures: bool = True
     learn_psi: bool = True
     use_psi_objective: bool = True      # False = Shield-Net style (psi-hat fixed at 1)
@@ -60,19 +59,14 @@ class Config:
 
     # ---------------- solver ----------------
     solver: str = "cbc"                 # "cbc" (bundled with PuLP 3.x) or "highs" (needs highspy)
-    time_limit: float = 30.0            # seconds per Mode B MILP solve
-    gap_rel: float = 0.005              # Mode B: stop once within 0.5% of the solver's own bound
-    candidate_k: int = 10               # Mode B: top-k edges per requester kept (0 = all edges, exact)
-    compute_bound: bool = True          # Mode B: also solve the LP relaxation for the gap
     check_invariants: bool = True       # assert the README Section 7 properties every round
 
     # ---------------- generator: suppliers ----------------
     n_suppliers: int = 450
-    supply_scale: float = 1.0           # multiplies the supplier count (keeps m_i <= 2 s_i valid)
+    supply_scale: float = 1.0           # multiplies the number of suppliers
     frac_enrol_round1: float = 0.7
     class_probs: tuple = (0.5, 0.3, 0.2)                     # S / M / L
     s_ranges: tuple = ((25, 100), (60, 250), (200, 800))     # daily rate, integer uniform
-    m_by_class: tuple = (50, 100, 200)
     price_range: tuple = (20.0, 150.0)
     price_mult: tuple = (1.0, 0.9, 0.8)
     cert_probs: tuple = (0.3, 0.5, 0.8)
@@ -109,10 +103,6 @@ class Config:
         return tuple(out)
 
     @property
-    def mode(self) -> str:
-        return "B" if self.enforce_min_shipment else "A"
-
-    @property
     def psi_true(self) -> tuple:
         same = self.psi0_same if self.psi_true_same is None else self.psi_true_same
         cross = self.psi0_cross if self.psi_true_cross is None else self.psi_true_cross
@@ -136,12 +126,6 @@ class Config:
             raise ValueError(
                 f"(C1) violated: alpha+beta+mu = {self.tie_break_max:.4f} must be < "
                 f"W[1]*psi_min = {self.W[0] * psi_min:.4f}")
-        if any(m < self.m_min for m in self.m_by_class):
-            raise ValueError("every supplier minimum order must be >= m_min")
-        for (lo, _), m in zip(self.s_ranges, self.m_by_class):
-            if self.enforce_min_shipment and m > 2 * lo:
-                log.warning("a supplier with rate %d cannot meet its minimum order %d "
-                            "in a 2-day round", lo, m)
         if self.need_clip[0] < self.m_min:
             raise ValueError("need_clip lower bound must be >= m_min")
         if self.learn_psi and not self.simulate_failures:

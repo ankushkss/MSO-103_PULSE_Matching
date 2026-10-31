@@ -27,7 +27,7 @@ def test_cap_binds_flagged(small_cfg, districts):
 
 def test_instance_independent_of_policy(small_cfg, districts):
     a = generate_instance(small_cfg, districts, seed=9)
-    b = generate_instance(small_cfg.with_(c=0.2, W=(1, 2, 3), enforce_min_shipment=True,
+    b = generate_instance(small_cfg.with_(c=0.2, W=(1, 2, 3),
                                           omega=0.0), districts, seed=9)
     np.testing.assert_array_equal(a.r_D0, b.r_D0)
     np.testing.assert_array_equal(a.s_rate, b.s_rate)
@@ -60,3 +60,32 @@ def test_reproducible(small_cfg, districts):
             continue                                       # wall-clock time differs
         same = s1[k] == s2[k] or (s1[k] != s1[k] and s2[k] != s2[k])   # NaN == NaN
         assert same, k
+
+
+def test_common_random_numbers_across_policies(small_cfg, districts):
+    """A match made under two different policies must turn out the same in both."""
+    runs = []
+    for cfg in (small_cfg, small_cfg.with_(c=0.2, W=(1.0, 2.0, 3.0), eta=0.0)):
+        sim = Simulation(cfg, districts, seed=3)
+        sim.run()
+        m = sim.matches
+        runs.append({(int(t), int(i), int(j)): bool(dv > 0)
+                     for t, i, j, dv in zip(m.get("tau"), m.get("sup"), m.get("req"), m.get("delivered"))})
+    shared = set(runs[0]) & set(runs[1])
+    assert len(shared) > 20
+    assert all(runs[0][k] == runs[1][k] for k in shared)
+
+
+def test_refused_matches_never_deliver(small_cfg, districts):
+    """Without the model's filters, over-budget or uncertified-when-required matches fail."""
+    cfg = small_cfg.with_(price_filter=False, cert_filter=False)
+    sim = Simulation(cfg, districts, seed=1)
+    rounds, _ = sim.run()
+    assert sum(r["refused_matches"] for r in rounds) > 0
+    inst, m = sim.inst, sim.matches
+    sup, req, dv = m.get("sup").astype(int), m.get("req").astype(int), m.get("delivered")
+    bad = (inst.s_price[sup] > inst.r_pmax[req]) | ((inst.r_kappa[req] == 2) & ~inst.s_cert[sup])
+    assert bad.any() and (dv[bad] == 0).all()
+    # with the filters on, nothing is ever refused
+    rounds_on, _ = Simulation(small_cfg, districts, seed=1).run()
+    assert sum(r["refused_matches"] for r in rounds_on) == 0
