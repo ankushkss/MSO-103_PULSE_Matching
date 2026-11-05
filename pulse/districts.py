@@ -175,7 +175,7 @@ def load_districts(path: str, district_seed: int = 12345,
 
     state_names, state = np.unique(np.asarray(states_raw, dtype=str), return_inverse=True)
     if n_blank:
-        log.warning("%d blank off-diagonal distances treated as unreachable", n_blank)
+        log.info("%d blank off-diagonal distances treated as unreachable (no road link)", n_blank)
     if n_asym:
         log.info("%d district pairs have asymmetric distances", n_asym)
     return Districts(ids=np.asarray(ids, dtype=str), names=np.asarray(names, dtype=str),

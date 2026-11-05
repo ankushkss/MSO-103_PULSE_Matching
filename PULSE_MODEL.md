@@ -208,7 +208,7 @@ A_i = s_i\,\Delta + r_i
 **In Shield-Net.** Distance was the straight line between the centres of two US states, so every pair in the same state had distance 0, and $`\alpha = 10^{-6}`$ per km was hard to interpret.
 
 **In PULSE.**
-- Distance is the **road distance between Indian districts**, from an 800 × 800 matrix, scaled by the longest distance:
+- Distance is the **road distance between Indian districts**, from a 789 × 789 matrix routed on OpenStreetMap roads, scaled by the longest distance:
 
 ```math
 \hat c_{ij} = \frac{R[k(i),\,k(j)]}{R_{max}} \in (0, 1]

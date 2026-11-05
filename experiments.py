@@ -24,7 +24,6 @@ import numpy as np
 import pandas as pd
 
 from pulse import Config, Simulation, load_districts, parse_overrides
-from pulse.make_districts import make_placeholder
 
 KEY_METRICS = ["wneed_fill_ref", "need_fill", "wfill_ref", "exp_fill_nonbulk", "exp_fill_overall", "fill_nonbulk", "fill_L1", "fill_L2", "fill_L3", "fill_L3_honest",
                "fill_bulk", "same_state_share", "mean_km", "failed_match_share",
@@ -172,10 +171,9 @@ def main() -> None:
 
     base = parse_overrides(Config(data_path=a.data), a.set)
     if not os.path.exists(base.data_path):
-        if os.path.normpath(base.data_path) != os.path.normpath("data/districts.xlsx"):
-            sys.exit(f"data file not found: {base.data_path}")
-        print("generating the 800-district placeholder...")
-        make_placeholder(base.data_path)
+        sys.exit(f"data file not found: {base.data_path} "
+                 "(the real workbook ships as data/districts.xlsx; "
+                 "python -m pulse.make_districts makes a synthetic one)")
     d = _districts(base)          # parse once (and write the cache) before workers start
     seeds = list(range(1, a.seeds + 1))
 

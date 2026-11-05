@@ -30,7 +30,7 @@ Between the two sits one piece of **platform procedure**: after each round the p
 | 7 | No hoarding control | Each request is split into **core** (plausible need for a facility of its type and size, minus what it already received) and **excess** (the rest). Core is served before any excess; nothing is cut | M | One 5-million-unit request had to be removed by hand |
 | 8 | Capacity per round | Capacity is a **daily rate** × days since the last round, plus carried stock | M (supply), S (carry-over) | Fri→Mon is 3 days, the other gaps are 2 |
 | 9 | No inventory | Unsold stock carries over with **leakage** and a **storage cap** | S | Suppliers had outside buyers; stock doesn't wait forever |
-| 10 | US states, straight-line distance between state centroids | 800 Indian districts, **road-distance** matrix | M (data) | Local setting; roads, not straight lines |
+| 10 | US states, straight-line distance between state centroids | 789 Indian districts, **road-distance** matrix | M (data) | Local setting; roads, not straight lines |
 | 11 | Requesters wait until served | Per-round **abandonment** | S | 52% of unsuccessful requesters sourced elsewhere |
 | 12 | Matches assumed to happen | Each match succeeds or fails at random; a requester refuses stock over its budget or uncertified stock it said it required; failed units return to demand | S | Matched is not the same as delivered |
 | 13 | Minimum request of 100, outside the model | Platform minimum request $`m_{min} = 50`$; **supplier minimum orders are not modelled** | — | A known limitation (Section 14) |
@@ -51,7 +51,7 @@ Between the two sits one piece of **platform procedure**: after each round the p
 
 ### 2.1 Input data file
 
-All district data comes from one Excel workbook. The code takes its path as a parameter, so the placeholder file and the real file are interchangeable.
+All district data comes from one Excel workbook. The real one ships as `data/districts.xlsx` and is the default; any workbook in the same format can be passed with `--data`.
 
 **Sheet `districts`**, one row per district:
 
@@ -60,9 +60,10 @@ All district data comes from one Excel workbook. The code takes its path as a pa
 | `district_id` | yes | unique ID, also used as the matrix headers |
 | `name` | yes | district name |
 | `state` | yes | state or UT name; defines $`\sigma(k)`$ and so the same/cross-state class |
-| `population` | no | used to place requesters (Section 12.2) |
+| `population` | no | used to place requesters (Section 12.2); without it requesters are spread evenly over districts |
+| other columns | no | ignored (the shipped file has `latitude`, `longitude` of each district headquarters) |
 
-**Sheet `distances`**: a $`|K| \times |K|`$ matrix (about 800 × 800) of road distances in km. The first column holds row `district_id`s and the first row holds column `district_id`s. Row $`k`$, column $`l`$ is $`R[k,l]`$.
+**Sheet `distances`**: a $`|K| \times |K|`$ matrix of road distances in km. The first column holds row `district_id`s and the first row holds column `district_id`s. Row $`k`$, column $`l`$ is $`R[k,l]`$.
 
 **The loader checks and normalises:**
 - Row IDs, column IDs and the `districts` sheet contain exactly the same IDs. Rows and columns are reordered to the `districts` order, so the file's own ordering does not matter.
@@ -73,7 +74,18 @@ All district data comes from one Excel workbook. The code takes its path as a pa
 - **Asymmetry** is allowed. $`R[k,l]`$ is always read as supplier district $`k`$ to requester district $`l`$.
 - The number of blank cells and asymmetric pairs is logged.
 
-**Placeholder file**, used until the real one is ready, in exactly the same format:
+Extra sheets (the shipped file has a `notes` sheet) are ignored.
+
+**The shipped file, `data/districts.xlsx`.** 789 districts in 36 states and union territories, IDs `D001`–`D789`, no `population` column.
+- Districts were scraped from Wikipedia's *List of districts in India* and each headquarters was geocoded with Nominatim (OpenStreetMap). Every point was checked against current district boundaries.
+- Road distances between headquarters come from OSRM (Open Source Routing Machine) on OpenStreetMap roads, the same kind of routing as Google Maps. The median ratio of road to straight-line distance is 1.27, and no pair is shorter than the straight line.
+- Fewer than 0.1% of mainland pairs could not be routed; they use straight-line distance × 1.3.
+- Three districts were geocoded to the wrong place (Anakapalli, Ananthapuramu, Bagpat) and five were missing (Manendragarh-Chirmiri-Bharatpur, Shahid Bhagat Singh Nagar, Dadra and Nagar Haveli, Daman, Diu). They were placed at their headquarters, and their distances were estimated from the nearest correctly routed district: $`R[X, l] = d(X, l)\cdot R[N, l] / d(N, l)`$, where $`d`$ is straight-line distance and $`N`$ the neighbour, so $`X`$ inherits $`N`$'s real road detours.
+- The diagonal is blank, so the loader's $`U[10,20]`$ rule applies.
+- Island districts have no road link: Andaman & Nicobar ↔ mainland and Lakshadweep ↔ everything are blank, so they are never matched. The three Andaman & Nicobar districts stay connected to each other.
+- The `notes` sheet records all of this.
+
+**Synthetic placeholder file** (optional, `python -m pulse.make_districts data/placeholder.xlsx`), in exactly the same format. The tests use a small one:
 - 800 districts with IDs `D001`–`D800`, spread over 36 states/UTs `S01`–`S36`. District counts per state come from a Dirichlet(1) split of the 800, with at least 1 district per state.
 - Each state gets a centre placed uniformly in a 3000 km × 3000 km square. Each district sits at its state centre plus Gaussian noise with $`\sigma = 150`$ km.
 - Off-diagonal road distance = 1.3 × straight-line distance, rounded to whole km and symmetric. The diagonal is left 0, so the loader's $`U[10,20]`$ rule is exercised.
@@ -336,7 +348,7 @@ The learning step is what a live platform would run: it watches which matches ar
 - The simulation shows that the mechanism works: when the prior is wrong, $`\hat\psi`$ moves toward the truth (Section 13, "value of learning").
 - It cannot tell us the real values for India. The district file gives locations and states, which decide each pair's class, but not whether matches succeed. Calibrating $`\psi`$ for India needs real delivery records.
 
-On the placeholder data, learning barely changes outcomes even when the prior is wrong. Supply becomes plentiful from round 4, and urgency already fixes most of the ordering, so a better estimate rarely changes who gets served. That is a result to report, not a bug. Learning should matter more when supply stays scarce (try `--set supply_scale=0.6`).
+On both the placeholder and the shipped district data, learning barely changes outcomes even when the prior is wrong. Supply becomes plentiful from round 4, and urgency already fixes most of the ordering, so a better estimate rarely changes who gets served. That is a result to report, not a bug. Learning should matter more when supply stays scarce (try `--set supply_scale=0.6`).
 
 ---
 
@@ -455,10 +467,10 @@ Use the same seeds across settings, and at least 20 seeds for anything you repor
 | 4 | price and certificate filters, PULSE tie-breakers |
 | 5 | core/excess split = full PULSE |
 
-Indicative result (10 seeds, placeholder data; report your own 20-seed numbers, not these):
-- Urgency-weighted genuine need met (`wneed_fill_ref`) rises from 0.49 (Shield-Net) to 0.72 (PULSE), and PULSE is higher on every seed, by 0.17 to 0.32.
-- Most of that gain comes from step 1 (planning for deliveries) and step 4 (not making matches the requester will refuse). Shield-Net makes over a thousand refused matches per run.
-- Step 5 (core/excess) raises genuine need met (`need_fill`) from 0.60 to 0.66, by up to 0.16 on a seed, and cuts what over-askers receive beyond their need by about 40%. Bulk requests still get served, but only after everyone's core.
+Indicative result (10 seeds, on the shipped district data; report your own 20-seed numbers, not these):
+- Urgency-weighted genuine need met (`wneed_fill_ref`) rises from 0.44 (Shield-Net) to 0.69 (PULSE), and PULSE is higher on every seed, by 0.14 to 0.33.
+- Most of that gain comes from step 1 (planning for deliveries, 0.44 → 0.51) and step 4 (not making matches the requester will refuse, 0.51 → 0.68). Shield-Net makes about 1,500 refused matches per run; PULSE makes none.
+- Step 5 (core/excess) raises genuine need met (`need_fill`) from 0.60 to 0.65, by up to 0.32 on a seed, and cuts what over-askers receive beyond their need by about 45%. Bulk requests still get served, but only after everyone's core.
 
 **Value of learning.** Set the true $`\psi^{\ast}_{same} \in \lbrace 0.30, 0.40, 0.55\rbrace`$ and $`\psi^{\ast}_{cross} \in \lbrace 0.08, 0.16, 0.25\rbrace`$, so the prior is right or wrong in either direction. Compare `learn_psi` on vs off, and track how fast $`\hat\psi`$ converges.
 
@@ -489,7 +501,7 @@ Indicative result (10 seeds, placeholder data; report your own 20-seed numbers, 
 4. **One request per requester.** Repeat requests are not modelled, so receipts reduce core only within a request's life ($`G_j`$), not across separate requests.
 5. **One item, pooled capacity.** A supplier's daily rate is shared across variants; real lines produce kits and assembled units at different rates.
 6. **Declared data is truthful and fixed.** Capacity, price, certification and staff count don't change after enrolment, and suppliers don't reprice. Core relies on staff counts being truthful; checking them is outside the model.
-7. **Districts are points.** All locations in a district are one point; the distance within a district is a random $`U[10,20]`$ km draw, not measured.
+7. **Districts are points.** All locations in a district are its headquarters; the distance within a district is a random $`U[10,20]`$ km draw, not measured. Distances for 8 of the 789 districts are estimated from a neighbour's routed distances rather than routed themselves, and island districts are only reachable from their own islands.
 8. **No transport model.** No lead times, vehicle capacity or delivery scheduling. The price is a delivered price; who pays for shipping is outside the model.
 9. **Learning is coarse, and only demonstrated in simulation.**
    - The prior comes from US data, and India's values need field data (Section 9).
@@ -507,14 +519,14 @@ Indicative result (10 seeds, placeholder data; report your own 20-seed numbers, 
 
 - **PuLP version:** pinned to **3.3.2**. PuLP 4.x (what a plain `pip install pulp` now gives) changed the modelling API and no longer bundles the CBC solver, so this code would not run on it unchanged.
 - **Solver:** CBC, bundled with PuLP 3.3.2. `--set solver=highs` switches to HiGHS (needs `pip install highspy`); the model is unchanged.
-- **Eligibility** is built with vectorised NumPy operations over (enrolled suppliers × active requesters): about 15–32 thousand allowed pairs per round on the placeholder data. A core variable is created on a pair only if the requester has core left, and an excess variable only if it has excess.
+- **Eligibility** is built with vectorised NumPy operations over (enrolled suppliers × active requesters): about 11–37 thousand allowed pairs per round on the shipped district data. A core variable is created on a pair only if the requester has core left, and an excess variable only if it has excess.
 - **Fast model building:** the objective and row sums use `pulp.LpAffineExpression` from prebuilt lists, not nested `lpSum`, which is slow at this size.
 - **Integers everywhere:** $`s_i`$, $`A_{i,\tau}`$, $`D_{j,\tau}`$, $`C_{j,\tau}`$, $`X_{j,\tau}`$ and $`r_{i,\tau}`$. The LP solution is asserted integral, then rounded.
 - **Reproducibility:** one master seed, with separate `numpy.random.Generator` streams for supplier generation, requester generation, match outcomes and abandonment. Changing a policy parameter never changes the generated instance or the random numbers. Runs are exactly reproducible.
 - **Checks every round** (`check_invariants`, on by default): supply, core and excess limits; no idle usable edge (7.1); integrality (7.3); core before excess (7.4); every edge value positive (C1).
-- **Tests** (`python -m pytest`, about 5 seconds):
+- **Tests** (`python -m pytest`, about 10 seconds):
   - model: integrality and no idle edge, optimality against an independent scipy solve, urgency dominance, core before excess, excess by priority once core is met
-  - loader: placeholder loads, diagonal in [10, 20], file order doesn't matter, blank pairs never matched, bad files rejected, cache round-trip
+  - loader: placeholder loads, diagonal in [10, 20], file order doesn't matter, blank pairs never matched, bad files rejected, cache round-trip; the shipped `data/districts.xlsx` loads, is symmetric, and keeps islands cut off
   - simulation: conservation of demand, core and excess add up to demand, core/excess off treats all demand as core, inflating a request gains no core, the instance is independent of policy, learning moves toward the truth, learning off keeps the prior, (C1) rejected, reproducibility, common random numbers, refused matches never deliver
 
 ---
@@ -543,7 +555,9 @@ In every new terminal after that: `cd` to the folder and activate the venv again
 | `PULSE_MODEL.md` | short, model-only summary: the LP and how it fixes each Shield-Net issue |
 | `pulse/config.py` | every parameter with its README default |
 | `pulse/districts.py` | Excel loader and validation (Section 2.1) |
-| `pulse/make_districts.py` | placeholder workbook generator |
+| `data/districts.xlsx` | the real district workbook: districts, states, road-distance matrix (Section 2.1) |
+| `pulse/make_districts.py` | synthetic placeholder workbook generator (optional; used by the tests) |
+| `data_prep/` | how `data/districts.xlsx` was made: `webScraper.ipynb` (scrape, geocode, OSRM routing), its raw output `districts_osrm_raw.xlsx`, and `fix_excel.py`, which applies the corrections in Section 2.1 and regenerates the shipped file exactly |
 | `pulse/generator.py` | synthetic suppliers and requesters (Section 12) |
 | `pulse/model.py` | the round LP in PuLP (Section 6) |
 | `pulse/simulation.py` | the six-round loop (Sections 5 and 8) |
@@ -551,12 +565,13 @@ In every new terminal after that: `cd` to the folder and activate the venv again
 | `run.py` | one simulation, printed round by round |
 | `experiments.py` | ablation, sweeps and learning suites (Section 13) |
 | `plots.py` | figures from the experiment results |
+| `compare.py` | Shield-Net vs PULSE on the same seed, as one 4-panel figure and a small table |
 | `tests/` | the Section 7 properties and loader checks |
 
 ### Commands
 
 ```bash
-# one run (creates data/districts.xlsx on first use if it is missing)
+# one run (uses data/districts.xlsx)
 python run.py                          # seed 1
 python run.py --seed 3
 python run.py --set H=7 --set "W=(1,2,3)" --set omega=0   # override parameters
@@ -571,22 +586,25 @@ python experiments.py --suite all      --seeds 20 --jobs 4   # the full set for 
 # figures from whatever is in results/
 python plots.py
 
+# Shield-Net vs PULSE on one seed -> results/compare/compare_seed1.png
+python compare.py --seed 1
+
 # tests
 python -m pytest
 ```
 
 `--set KEY=VALUE` works on both `run.py` and `experiments.py` and accepts any field of `pulse/config.py` (the "Code name" column in Section 3.3). Numbers, `True`/`False`, `inf`, `None` and tuples such as `"(1,2,3)"` are all understood.
 
-### Using your real district file
+### Using a different district file
 
-Put the workbook anywhere, in the format of Section 2.1, and point to it:
+Everything uses `data/districts.xlsx` by default. To use another workbook in the format of Section 2.1 (an updated matrix, or one with a `population` column), point to it:
 
 ```bash
-python run.py --data path/to/real_districts.xlsx
-python experiments.py --suite all --data path/to/real_districts.xlsx
+python run.py --data path/to/other_districts.xlsx
+python experiments.py --suite all --data path/to/other_districts.xlsx
 ```
 
-The first load of an 800 × 800 sheet takes a few seconds. After that it is read from `real_districts.xlsx.cache.npz`, which is rebuilt automatically whenever the workbook changes. If the file has a problem (mismatched IDs, a non-numeric cell, an off-diagonal zero), the loader stops with a message naming the cell.
+The first load of a 789 × 789 sheet takes a few seconds. After that it is read from `districts.xlsx.cache.npz` next to the workbook, which is rebuilt automatically whenever the workbook changes. If the file has a problem (mismatched IDs, a non-numeric cell, an off-diagonal zero), the loader stops with a message naming the cell.
 
 ### Runtime
 
@@ -594,9 +612,8 @@ Measured on a 2-core Linux machine:
 
 | Step | Time |
 |---|---|
-| generate the placeholder workbook | ~8 s (once) |
-| first load of an 800 × 800 workbook | ~6 s, then ~0.4 s from the cache |
-| one run | 3.1 s on average (2.7–3.8 s over 10 seeds) |
+| first load of the 789 × 789 workbook | ~6 s, then ~0.4 s from the cache |
+| one run | about 3.5 s (3.0–4.1 s) on the shipped district data |
 | `--suite ablation`, per seed | ~30 s |
 | `--suite sweeps`, per seed | ~50 s |
 | `--suite learning`, per seed | ~55 s |

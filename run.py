@@ -1,9 +1,9 @@
 """Run one PULSE simulation and print what happened round by round.
 
 Examples:
-    python run.py                         # seed 1, placeholder data
+    python run.py                         # seed 1, real district data (data/districts.xlsx)
     python run.py --seed 3
-    python run.py --data path/to/real.xlsx --set c=0.1 --set "W=(1,2,3)"
+    python run.py --data path/to/other.xlsx --set "W=(1,2,3)"
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ import sys
 import pandas as pd
 
 from pulse import Config, Simulation, load_districts, parse_overrides
-from pulse.make_districts import make_placeholder
 
 DEFAULT_DATA = "data/districts.xlsx"
 
@@ -30,10 +29,9 @@ ROUND_COLS = ["round", "day", "suppliers_active", "requesters_active", "A_tot", 
 def ensure_data(path: str) -> None:
     if os.path.exists(path):
         return
-    if os.path.normpath(path) != os.path.normpath(DEFAULT_DATA):
-        sys.exit(f"data file not found: {path}")
-    print(f"{path} not found; generating the 800-district placeholder (takes ~10 s)...")
-    make_placeholder(path)
+    sys.exit(f"data file not found: {path}\n"
+             "The real district workbook ships as data/districts.xlsx. For a synthetic one, run:\n"
+             "    python -m pulse.make_districts data/placeholder.xlsx")
 
 
 def main() -> None:
