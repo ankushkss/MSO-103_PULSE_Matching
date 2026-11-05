@@ -9,6 +9,7 @@ from .config import Config
 from .districts import Districts
 from .generator import Instance, generate_instance, make_streams
 from .metrics import MatchLog, round_record, run_summary
+from .benchmarks import heuristic_round
 from .model import RoundProblem, solve_round
 
 log = logging.getLogger("pulse")
@@ -149,7 +150,13 @@ class Simulation:
         if cfg.check_invariants and len(wvec):
             assert (wvec > 0).all(), "(C1) violated: an edge has non-positive value"
         P = RoundProblem(e_sup=ei, e_req=ej, w=wvec, A=A, C=C, X=X, eps=cfg.excess_weight)
-        sol = solve_round(P, solver=cfg.solver)
+        if cfg.policy == "lp":
+            sol = solve_round(P, solver=cfg.solver)
+        else:
+            # benchmark rule on the same edges, stock and core/excess rows (pulse/benchmarks.py);
+            # its own RNG stream so the instance and outcome draws are untouched
+            rng = np.random.default_rng([self.seed, tau, 7919])
+            sol = heuristic_round(cfg.policy, P, Rk, inst.r_arrival[req], rng)
         x = sol.x
 
         # 8.1 realise matches (outcomes from the TRUE psi, never psi_hat)

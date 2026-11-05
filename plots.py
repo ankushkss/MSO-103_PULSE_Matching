@@ -5,7 +5,8 @@
 
 Reads results/<suite>_runs.csv and results/<suite>_rounds.csv written by
 experiments.py, and results/single/rounds.csv written by run.py.
-Error bars are one standard error of the mean across seeds.
+Error bars on level plots are one standard error of the mean across seeds.
+Forest plots use results/<suite>_paired.csv: paired per-seed differences with 95% t-CIs.
 """
 from __future__ import annotations
 
@@ -58,6 +59,111 @@ def plot_ablation(runs: pd.DataFrame, out: str) -> str:
     ax.set_title("Ablation: Shield-Net to PULSE, one feature at a time", loc="left", color=INK, pad=26)
     ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, borderaxespad=0.2)
     path = os.path.join(out, "ablation.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+FOREST_METRICS = [("need_fill", "need met"), ("wneed_fill_ref", "weighted need met (1,10,100)"),
+                  ("wneed_fill_w123", "weighted need met (1,2,3)"),
+                  ("exp_fill_nonbulk", "expected fill")]
+
+
+def plot_forest(paired: pd.DataFrame, comparison: str, title: str, out: str, fname: str) -> str | None:
+    """Paired difference vs reference with 95% CI; one row per config, one colour per metric."""
+    sub = paired[paired["comparison"] == comparison]
+    if sub.empty:
+        return None
+    configs = list(dict.fromkeys(sub["config"]))
+    metrics = [(m, n) for m, n in FOREST_METRICS if m in set(sub["metric"])]
+    colours = SERIES + ["#8a5cd1"]
+    y = np.arange(len(configs))
+    h = 0.8 / max(1, len(metrics))
+    fig, ax = plt.subplots(figsize=(7.5, 0.55 * len(configs) + 1.4))
+    for k, (m, name) in enumerate(metrics):
+        r = sub[sub["metric"] == m].set_index("config").reindex(configs)
+        yy = y + (k - (len(metrics) - 1) / 2) * h
+        ax.errorbar(r["mean_diff"], yy, xerr=[r["mean_diff"] - r["ci_low"], r["ci_high"] - r["mean_diff"]],
+                    fmt="o", ms=4, color=colours[k], capsize=2, lw=1.2, label=name)
+    ax.axvline(0, color=INK_2, lw=0.8)
+    ax.set_yticks(y, configs)
+    ax.invert_yaxis()
+    ref = sub["reference"].iloc[0] if sub["reference"].nunique() == 1 else "reference"
+    ax.set_xlabel(f"paired difference vs {ref} (95% CI over seeds)")
+    ax.set_title(title, loc="left", color=INK, pad=40)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, borderaxespad=0.2)
+    path = os.path.join(out, fname)
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_ablation_seeds(runs: pd.DataFrame, out: str, metric: str = "need_fill") -> str:
+    """Each seed as a line across ablation steps: shows whether a gain holds on every seed."""
+    order = list(dict.fromkeys(runs["config"]))
+    wide = runs.pivot(index="seed", columns="config", values=metric)[order]
+    x = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(7.5, 3.4))
+    for _, row in wide.iterrows():
+        ax.plot(x, row.values, color=SERIES[0], alpha=0.25, lw=1)
+    ax.plot(x, wide.mean().values, color=SERIES[1], lw=2.2, marker="o", ms=5, label="mean")
+    ax.set_xticks(x, [c.split(" ", 1)[0] for c in order])
+    ax.set_xlabel("ablation step (see ablation_table.csv for labels)")
+    ax.set_ylabel(metric)
+    ax.set_title(f"Ablation per seed: {metric}", loc="left", color=INK)
+    ax.legend(loc="lower right")
+    path = os.path.join(out, f"ablation_seeds_{metric}.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_ci_convergence(runs: pd.DataFrame, config: str, reference: str, out: str,
+                        metrics=("need_fill", "wneed_fill_ref", "exp_fill_nonbulk")) -> str | None:
+    """95% CI half-width of the paired difference vs number of seeds (justifies the seed count)."""
+    from scipy import stats as sps
+    a = runs[runs["config"] == config].set_index("seed")
+    b = runs[runs["config"] == reference].set_index("seed")
+    seeds = sorted(a.index.intersection(b.index))
+    if len(seeds) < 3:
+        return None
+    fig, ax = plt.subplots(figsize=(6, 3.2))
+    ns = np.arange(3, len(seeds) + 1)
+    for k, m in enumerate(metrics):
+        if m not in a.columns:
+            continue
+        d = (a.loc[seeds, m] - b.loc[seeds, m]).to_numpy(dtype=float)
+        hw = [sps.t.ppf(0.975, n - 1) * d[:n].std(ddof=1) / np.sqrt(n) for n in ns]
+        ax.plot(ns, hw, color=SERIES[k % len(SERIES)], lw=2, marker="o", ms=3, label=m)
+    ax.set_xlabel("number of seeds")
+    ax.set_ylabel("95% CI half-width")
+    ax.set_title(f"CI width: {config} vs {reference}", loc="left", color=INK)
+    ax.legend(loc="upper right")
+    path = os.path.join(out, "ci_convergence.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_bound_gap(gap: pd.DataFrame, out: str, metric: str = "need_fill") -> str | None:
+    """Share of the clairvoyant fluid bound (H1) each policy achieves."""
+    col = f"{metric}_pct_of_H1"
+    if col not in gap.columns:
+        return None
+    g = gap[~gap["config"].str.startswith("H")]
+    y = np.arange(len(g))
+    fig, ax = plt.subplots(figsize=(7, 0.5 * len(g) + 1.2))
+    ax.barh(y, g[col] * 100, color=[SERIES[1] if c == "PULSE" else SERIES[0] for c in g["config"]],
+            height=0.6)
+    for yy, v in zip(y, g[col] * 100):
+        ax.text(v + 0.8, yy, f"{v:.1f}%", va="center", color=INK, fontsize=8)
+    ax.set_yticks(y, g["config"])
+    ax.invert_yaxis()
+    ax.set_xlim(0, 110)
+    ax.axvline(100, color=INK_2, lw=0.8, ls="--")
+    ax.set_xlabel(f"{metric}: % of the clairvoyant bound (knows all future arrivals)")
+    ax.set_title("How close each policy gets to the best achievable", loc="left", color=INK)
+    path = os.path.join(out, f"bound_gap_{metric}.png")
     fig.savefig(path)
     plt.close(fig)
     return path
@@ -177,19 +283,41 @@ def main() -> None:
     runs, _ = load("ablation")
     if runs is not None:
         made.append(plot_ablation(runs, out))
+        made.append(plot_ablation_seeds(runs, out))
+        order = list(dict.fromkeys(runs["config"]))
+        made.append(plot_ci_convergence(runs, order[-1], order[0], out))
+    for suite, comp, title, fname in [
+            ("ablation", "vs_shieldnet", "Gain over Shield-Net (paired)", "forest_vs_shieldnet.png"),
+            ("ablation", "vs_fair_shieldnet", "Gain over Shield-Net + filters (paired)",
+             "forest_vs_fair_shieldnet.png"),
+            ("ablation", "vs_previous_step", "Marginal gain of each ablation step (paired)",
+             "forest_marginal.png"),
+            ("sweeps", "vs_default", "Sweeps: change vs default value (paired)", "forest_sweeps.png"),
+            ("learning", "learn_on_vs_off", "Value of learning ψ (paired, on - off)",
+             "forest_learning.png"),
+            ("benchmarks", "vs_pulse", "Benchmarks: difference from PULSE (paired)",
+             "forest_benchmarks.png")]:
+        pp = os.path.join(a.results, f"{suite}_paired.csv")
+        if os.path.exists(pp):
+            made.append(plot_forest(pd.read_csv(pp), comp, title, out, fname))
     runs, _ = load("sweeps")
     if runs is not None:
         made.append(plot_sweeps(runs, out))
     runs, rounds = load("learning")
     if runs is not None and rounds is not None:
         made.extend(plot_learning(runs, rounds, out))
+    gp = os.path.join(a.results, "benchmarks_gap.csv")
+    if os.path.exists(gp):
+        made.append(plot_bound_gap(pd.read_csv(gp), out))
     single = os.path.join(a.results, "single", "rounds.csv")
     if os.path.exists(single):
         made.append(plot_single(pd.read_csv(single), out))
+    made = [p for p in made if p]
     if not made:
         print(f"no results found in {a.results}/ (run run.py or experiments.py first)")
     for p in made:
-        print("wrote", p)
+        if p:
+            print("wrote", p)
 
 
 if __name__ == "__main__":

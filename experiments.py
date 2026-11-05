@@ -3,6 +3,7 @@
     python experiments.py --suite ablation --seeds 5
     python experiments.py --suite sweeps   --seeds 5 --jobs 4
     python experiments.py --suite learning --seeds 5
+    python experiments.py --suite benchmarks --seeds 30
     python experiments.py --suite all      --seeds 20
 
 Every configuration in a suite is run on the same seeds, so differences come from
@@ -25,8 +26,10 @@ import pandas as pd
 
 from pulse import Config, Simulation, load_districts, parse_overrides
 from pulse.make_districts import make_placeholder
+from pulse.benchmarks import hindsight
+from pulse.stats import paired_table
 
-KEY_METRICS = ["wneed_fill_ref", "need_fill", "wfill_ref", "exp_fill_nonbulk", "exp_fill_overall", "fill_nonbulk", "fill_L1", "fill_L2", "fill_L3", "fill_L3_honest",
+KEY_METRICS = ["wneed_fill_ref", "wneed_fill_w123", "need_fill", "wfill_ref", "exp_fill_nonbulk", "exp_fill_overall", "fill_nonbulk", "fill_L1", "fill_L2", "fill_L3", "fill_L3_honest",
                "fill_bulk", "same_state_share", "mean_km", "failed_match_share",
                "units_abandoned", "stranded_requester_rounds", "solve_seconds"]
 
@@ -64,6 +67,11 @@ def ablation_suite(base: Config, R_max: float) -> list[tuple[str, str, dict]]:
     for label, delta in steps:
         acc.update(delta)
         out.append((label, "ablation", dict(acc)))
+    # Fair baseline (referee point A2): Shield-Net that also drops pairs the requester
+    # would refuse. Separates the gain from filtering out sure refusals from the gain
+    # from PULSE's objective. Not cumulative, so it sits outside the ladder.
+    out.insert(1, ("0b Shield-Net + price & cert filters", "ablation",
+                   dict(shieldnet, price_filter=True, cert_filter=True)))
     return out
 
 
@@ -95,6 +103,83 @@ def learning_suite(base: Config) -> list[tuple[str, str, dict]]:
     return out
 
 
+HINDSIGHT = "H1 clairvoyant fluid bound (knows arrivals)"
+HINDSIGHT_REALISED = "H2 perfect hindsight (knows arrivals + outcomes)"
+PULSE_LABEL = "PULSE"
+
+
+def benchmarks_suite(base: Config, R_max: float) -> list[tuple[str, str, dict]]:
+    """PULSE against an upper bound and simple allocation rules (CHANGES.md, session 2)."""
+    fair_sn = [c for c in ablation_suite(base, R_max) if c[0].startswith("0b")][0][2]
+    return [
+        (HINDSIGHT_REALISED, "bound", {"_hindsight": "realised"}),
+        (HINDSIGHT, "bound", {"_hindsight": "expected"}),
+        (PULSE_LABEL, "lp", {}),
+        ("Shield-Net + filters", "lp", fair_sn),
+        ("Proportional rationing", "heuristic", dict(policy="proportional")),
+        ("FCFS (nearest supplier)", "heuristic", dict(policy="fcfs")),
+        ("Random", "heuristic", dict(policy="random")),
+    ]
+
+
+# ---------------------------------------------------------------- comparisons
+# Each suite gets the reference that answers its own question (CHANGES.md D4).
+SHIELDNET, FAIR_SHIELDNET = "0 Shield-Net", "0b Shield-Net + price & cert filters"
+
+
+def ablation_comparisons(configs) -> list[tuple[str, str, str]]:
+    labels = [c[0] for c in configs]
+    ladder = [l for l in labels if l != FAIR_SHIELDNET]
+    out = [("vs_shieldnet", l, SHIELDNET) for l in labels if l != SHIELDNET]
+    out += [("vs_fair_shieldnet", l, FAIR_SHIELDNET) for l in ladder if l != SHIELDNET]
+    out += [("vs_previous_step", b, a) for a, b in zip(ladder, ladder[1:])]
+    return out
+
+
+def sweep_comparisons(configs, base: Config) -> list[tuple[str, str, str]]:
+    out = []
+    for group in dict.fromkeys(g for _, g, _ in configs):
+        members = [(l, ov) for l, g, ov in configs if g == group]
+        ref = [l for l, ov in members if ov[group] == getattr(base, group)]
+        if not ref:
+            continue                     # base was overridden to a value outside the grid
+        out += [("vs_default", l, ref[0]) for l, _ in members if l != ref[0]]
+    return out
+
+
+def benchmark_comparisons(configs) -> list[tuple[str, str, str]]:
+    return [("vs_pulse", l, PULSE_LABEL) for l, _, _ in configs if l != PULSE_LABEL]
+
+
+def hindsight_gap(rdf: pd.DataFrame, metrics=("need_fill", "wneed_fill_ref", "wneed_fill_w123")):
+    """Per config: mean metric over seeds / mean bound over seeds, for each bound.
+
+    Ratio of means, not mean of per-seed ratios: the fluid bound H1 limits EXPECTED
+    performance, so it is only meaningful against an average (CHANGES.md D12).
+    """
+    rows = []
+    bounds = [b for b in (HINDSIGHT, HINDSIGHT_REALISED) if (rdf["config"] == b).any()]
+    for config, g in rdf.groupby("config", sort=False):
+        row = {"config": config, "n": int(g["seed"].nunique())}
+        for b in bounds:
+            hs = rdf[rdf["config"] == b]
+            tag = "H1" if b == HINDSIGHT else "H2"
+            for m in metrics:
+                row[f"{m}_pct_of_{tag}"] = float(g[m].mean() / hs[m].mean())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def learning_comparisons(configs) -> list[tuple[str, str, str]]:
+    out = []
+    for group in dict.fromkeys(g for _, g, _ in configs):
+        on = [l for l, g, ov in configs if g == group and ov["learn_psi"]]
+        off = [l for l, g, ov in configs if g == group and not ov["learn_psi"]]
+        if on and off:
+            out.append(("learn_on_vs_off", on[0], off[0]))
+    return out
+
+
 # ---------------------------------------------------------------- running
 def _init_worker():
     # Worker processes start fresh on Windows (spawn), so set logging again.
@@ -103,16 +188,22 @@ def _init_worker():
 
 def _run_one(args):
     label, group, overrides, base, seed = args
+    overrides = dict(overrides)
+    is_bound = overrides.pop("_hindsight", False)
     cfg = base.with_(**overrides)
     t = time.perf_counter()
-    rounds, summary = Simulation(cfg, _districts(cfg), seed=seed).run()
+    if is_bound:
+        rounds, summary = hindsight(cfg, _districts(cfg), seed, outcomes=is_bound)
+    else:
+        rounds, summary = Simulation(cfg, _districts(cfg), seed=seed).run()
     tag = {"config": label, "group": group, "seed": seed}
     summary = {**tag, **summary, "wall_seconds": round(time.perf_counter() - t, 2)}
     rounds = [{**tag, **r} for r in rounds]
     return summary, rounds
 
 
-def run_suite(name: str, configs, base: Config, seeds: list[int], jobs: int, out_dir: str):
+def run_suite(name: str, configs, base: Config, seeds: list[int], jobs: int, out_dir: str,
+              comparisons=()):
     tasks = [(label, group, ov, base, s) for (label, group, ov) in configs for s in seeds]
     print(f"[{name}] {len(configs)} configurations x {len(seeds)} seeds = {len(tasks)} runs, {jobs} jobs")
     runs, rounds = [], []
@@ -136,7 +227,7 @@ def run_suite(name: str, configs, base: Config, seeds: list[int], jobs: int, out
     rdf = pd.DataFrame(runs)
     rdf["_o"] = rdf["config"].map(order)
     rdf = rdf.sort_values(["_o", "seed"]).drop(columns="_o")
-    rodf = pd.DataFrame(rounds)
+    rodf = pd.DataFrame(rounds, columns=None if rounds else ["config", "seed", "round"])
     rodf["_o"] = rodf["config"].map(order)
     rodf = rodf.sort_values(["_o", "seed", "round"]).drop(columns="_o")
 
@@ -149,17 +240,38 @@ def run_suite(name: str, configs, base: Config, seeds: list[int], jobs: int, out
     rdf.to_csv(os.path.join(out_dir, f"{name}_runs.csv"), index=False)
     rodf.to_csv(os.path.join(out_dir, f"{name}_rounds.csv"), index=False)
     table.to_csv(os.path.join(out_dir, f"{name}_table.csv"), index=False)
+    if comparisons and len(seeds) >= 2:
+        paired = paired_table(rdf, comparisons, metrics)
+        paired.to_csv(os.path.join(out_dir, f"{name}_paired.csv"), index=False)
+        _print_paired(paired)
 
-    show = table[["config"] + [f"{m}_mean" for m in ("wfill_ref", "fill_nonbulk", "fill_L3",
-                                                     "same_state_share", "solve_seconds")]]
-    show.columns = ["config", "wfill_ref", "fill_nonbulk", "fill_L3", "same_state", "solve_s"]
+    if rdf["config"].isin([HINDSIGHT, HINDSIGHT_REALISED]).any():
+        gap = hindsight_gap(rdf)
+        gap.to_csv(os.path.join(out_dir, f"{name}_gap.csv"), index=False)
+        print("share of the hindsight upper bound achieved (mean over seeds):")
+        print(gap.round(3).to_string(index=False))
+
+    cols = [m for m in ("need_fill", "wneed_fill_ref", "fill_nonbulk", "fill_L3",
+                        "same_state_share", "solve_seconds") if f"{m}_mean" in table.columns]
+    show = table[["config"] + [f"{m}_mean" for m in cols]]
+    show.columns = ["config"] + cols
     print(show.round(3).to_string(index=False))
     print(f"[{name}] done in {time.perf_counter() - t0:.0f}s -> {out_dir}/{name}_*.csv\n")
 
 
+def _print_paired(paired: pd.DataFrame) -> None:
+    show = paired[paired["primary"] & paired["metric"].isin(["need_fill", "wneed_fill_ref"])]
+    if show.empty:
+        return
+    show = show[["comparison", "config", "metric", "mean_diff", "ci_low", "ci_high",
+                 "win_share", "p_holm"]]
+    print("paired differences (config - reference), 95% CI, Holm-adjusted Wilcoxon p:")
+    print(show.round(4).to_string(index=False))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--suite", choices=["ablation", "sweeps", "learning", "all"], default="ablation")
+    ap.add_argument("--suite", choices=["ablation", "sweeps", "learning", "benchmarks", "all"], default="ablation")
     ap.add_argument("--seeds", type=int, default=5, help="number of seeds (1..N)")
     ap.add_argument("--jobs", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)),
                     help="parallel worker processes")
@@ -179,15 +291,21 @@ def main() -> None:
     d = _districts(base)          # parse once (and write the cache) before workers start
     seeds = list(range(1, a.seeds + 1))
 
-    suites = ["ablation", "sweeps", "learning"] if a.suite == "all" else [a.suite]
+    suites = ["ablation", "sweeps", "learning", "benchmarks"] if a.suite == "all" else [a.suite]
     for name in suites:
         if name == "ablation":
             configs = ablation_suite(base, d.R_max)
+            comps = ablation_comparisons(configs)
         elif name == "sweeps":
             configs = sweeps_suite(base)
+            comps = sweep_comparisons(configs, base)
+        elif name == "benchmarks":
+            configs = benchmarks_suite(base, d.R_max)
+            comps = benchmark_comparisons(configs)
         else:
             configs = learning_suite(base)
-        run_suite(name, configs, base, seeds, a.jobs, a.out)
+            comps = learning_comparisons(configs)
+        run_suite(name, configs, base, seeds, a.jobs, a.out, comps)
 
 
 if __name__ == "__main__":

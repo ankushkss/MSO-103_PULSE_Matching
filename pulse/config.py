@@ -59,6 +59,9 @@ class Config:
     # ---------------- solver ----------------
     solver: str = "cbc"                 # "cbc" (bundled with PuLP 3.x) or "highs" (needs highspy)
     check_invariants: bool = True       # assert the README Section 7 properties every round
+    policy: str = "lp"                  # "lp" (PULSE / Shield-Net model) or a benchmark heuristic:
+                                        # "fcfs", "proportional", "random" (pulse/benchmarks.py)
+
 
     # ---------------- generator: suppliers ----------------
     n_suppliers: int = 450
@@ -132,6 +135,8 @@ class Config:
             raise ValueError(
                 f"(C3) violated: excess_weight*W[3] = {self.excess_weight * self.W[2]:.2e} must be < "
                 f"W[1]*psi_min - (alpha+beta+mu) = {core_min:.4f}")
+        if self.policy not in ("lp", "fcfs", "proportional", "random"):
+            raise ValueError(f"unknown policy {self.policy!r}")
         if len(self.usage_rates) != 3 or any(r <= 0 for r in self.usage_rates):
             raise ValueError("usage_rates must be three positive rates")
         if self.need_clip[0] < self.m_min:

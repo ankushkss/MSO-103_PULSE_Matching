@@ -247,7 +247,7 @@ Each allowed pair has two flows: $`x^c_{ij}`$ toward the requester's core and $`
 \end{aligned}
 ```
 
-Read it as: maximise the **expected urgency-weighted delivery of genuine need**, with excess served only from what is left, by the same priorities. The code implements this with `LpMaximize`. A flow is created only where its demand row is positive, so requesters with no excess get no excess variables.
+Read it as: maximise the **expected urgency-weighted delivery of genuine need**, with excess served only from what is left, by the same priorities. `PULSE_MODEL.md` Section 2 walks through the same model step by step, with each constraint in words and a worked numeric example. The code implements this with `LpMaximize`. A flow is created only where its demand row is positive, so requesters with no excess get no excess variables.
 
 ### 6.3 Exactly what changed
 
@@ -336,7 +336,7 @@ The learning step is what a live platform would run: it watches which matches ar
 - The simulation shows that the mechanism works: when the prior is wrong, $`\hat\psi`$ moves toward the truth (Section 13, "value of learning").
 - It cannot tell us the real values for India. The district file gives locations and states, which decide each pair's class, but not whether matches succeed. Calibrating $`\psi`$ for India needs real delivery records.
 
-On the placeholder data, learning barely changes outcomes even when the prior is wrong. Supply becomes plentiful from round 4, and urgency already fixes most of the ordering, so a better estimate rarely changes who gets served. That is a result to report, not a bug. Learning should matter more when supply stays scarce (try `--set supply_scale=0.6`).
+On the placeholder data, learning barely changes outcomes even when the prior is wrong. Supply becomes plentiful from round 4, and urgency already fixes most of the ordering, so a better estimate rarely changes who gets served. That is a result to report, not a bug. The 30-seed learning suite confirms it: $`\hat\psi`$ converges to within 0.01 of the truth, yet outcomes change by less than 0.003 (Section 13.3).
 
 ---
 
@@ -438,46 +438,169 @@ In full runs, the share of failed matches is within 0.2% of what $`\psi^{\ast}`$
 
 ---
 
-## 13. Experiments
+## 13. Experiments and results
 
-Use the same seeds across settings, and at least 20 seeds for anything you report.
+All numbers below are from **30 paired seeds** on the **placeholder district data** (Section 2.1), produced by `python experiments.py --suite all --seeds 30`. Every configuration runs on the same seeds with **common random numbers** (13.7), so differences come only from the platform's decisions. "Need met" is `need_fill` (Section 10); 95% confidence intervals are paired t-intervals over seeds; p-values are Wilcoxon signed-rank, Holm-adjusted across the five primary metrics (`pulse/stats.py`, `CHANGES.md` D1–D7).
 
-**Ablation ladder.** Start from Shield-Net (Section 7.5) and add one model feature at a time.
+### 13.1 Ablation: from Shield-Net to PULSE, one feature at a time
 
-**Every step runs in the same simulated world as full PULSE**: carried stock, abandonment, random match outcomes and refusals. So the steps differ only in the platform's decisions, and the comparison is fair. Inventory and abandonment describe the world, not the platform, so they are not steps.
+Every step runs in the **same simulated world** as full PULSE (carried stock, abandonment, random outcomes, refusals). Step **0b** is a *fair* baseline: Shield-Net that also drops pairs the requester is certain to refuse (over budget, or uncertified when certification is required).
 
-| Step | Adds |
+| Step | Adds | Need met | Urgency-weighted need met (1,10,100) | Weighted (1,2,3) | Level-3 honest fill | Same-state share | Units beyond need |
+|---|---|---|---|---|---|---|---|
+| 0 | Shield-Net | 0.368 | 0.475 | 0.409 | 0.478 | 0.35 | 33,748 |
+| 0b | Shield-Net + price & certificate filters | 0.524 | 0.605 | 0.557 | 0.603 | 0.27 | 45,160 |
+| 1 | expected-delivery objective, fixed prior $`\psi`$ | 0.437 | 0.545 | 0.478 | 0.549 | 0.59 | 31,517 |
+| 2 | learning $`\psi`$ | 0.435 | 0.540 | 0.476 | 0.544 | 0.58 | 31,384 |
+| 3 | urgency weights (1, 10, 100) | 0.417 | 0.542 | 0.465 | 0.548 | 0.54 | 35,595 |
+| 4 | price and certificate filters, PULSE tie-breakers | 0.593 | 0.701 | 0.636 | 0.708 | 0.45 | 45,068 |
+| 5 | core/excess split = **full PULSE** | **0.652** | **0.704** | **0.673** | **0.706** | 0.50 | **21,388** |
+
+**Paired gains** (mean difference, 95% CI, seeds won out of 30):
+
+| Comparison | Need met | Urgency-weighted (1,10,100) |
+|---|---|---|
+| PULSE vs Shield-Net | +0.284 [0.258, 0.310], 30/30 | +0.229 [0.208, 0.250], 30/30 |
+| **PULSE vs Shield-Net + filters (headline)** | **+0.129 [0.100, 0.157], 30/30** | **+0.098 [0.084, 0.113], 30/30** |
+| Filters alone (0 → 0b) | +0.156 [0.144, 0.168], 30/30 | +0.130 [0.115, 0.146], 30/30 |
+
+**Marginal gain of each step** (vs the previous step):
+
+| Step | Need met | Holm p | Reading |
+|---|---|---|---|
+| 1 expected-delivery objective | +0.070 [0.055, 0.084] | < 0.001 | planning for deliveries helps |
+| 2 learning $`\psi`$ | −0.002 [−0.004, 0.000] | 0.20 | **no effect** (see 13.3) |
+| 3 weights (1,10,100) | −0.018 [−0.027, −0.009] | < 0.001 | trades total need for urgency; urgency-weighted fill unchanged (+0.001, n.s.) |
+| 4 price & certificate filters | +0.176 [0.162, 0.190] | < 0.001 | **largest single gain**: no matches the requester will refuse |
+| 5 core/excess | +0.059 [0.036, 0.082], 26/30 seeds | < 0.001 | more genuine need met; **units delivered beyond need halved** (45,068 → 21,388); no change for the most urgent (level-3 fill −0.002, n.s.) |
+
+What this means:
+- The honest headline is **PULSE vs Shield-Net + filters**: +0.13 need met, better on every seed and every primary metric.
+- Steps 1–3 *without* the filters are worse than the fair baseline. Most of what earlier versions of this README credited to step 1 comes from not making refused matches.
+- Core/excess raises total genuine need met and stops over-askers from absorbing stock, but does not change what the most urgent requesters get.
+
+Figures: `forest_vs_shieldnet.png`, `forest_vs_fair_shieldnet.png`, `forest_marginal.png`, `ablation_seeds_need_fill.png`, `ci_convergence.png`.
+
+### 13.2 Benchmarks: how close is PULSE to the best achievable?
+
+`python experiments.py --suite benchmarks` (`pulse/benchmarks.py`). Heuristics replace only the round LP and see the **same** edges, stock and core/excess rows, so they differ from PULSE only in the allocation rule.
+
+| Policy | What it does |
 |---|---|
-| 0 | Shield-Net |
-| 1 | expected-delivery objective, fixed prior $`\psi`$ |
-| 2 | learning $`\psi`$ |
-| 3 | urgency weights (1, 10, 100) |
-| 4 | price and certificate filters, PULSE tie-breakers |
-| 5 | core/excess split = full PULSE |
+| **H2 perfect hindsight** | knows every future arrival, abandonment **and coin flip**; a strict per-seed upper bound |
+| **H1 clairvoyant fluid bound** | knows every future arrival and abandonment, but only the success *probabilities*; bounds a policy's *expected* performance |
+| Proportional rationing | every requester gets the same share of its demand ($`\min(1, \text{supply}/\text{demand})`$), then leftovers greedily |
+| FCFS | requesters in arrival order, each served by its nearest suppliers |
+| Random | random requester order, random supplier order |
 
-Indicative result (10 seeds, placeholder data; report your own 20-seed numbers, not these):
-- Urgency-weighted genuine need met (`wneed_fill_ref`) rises from 0.49 (Shield-Net) to 0.72 (PULSE), and PULSE is higher on every seed, by 0.17 to 0.32.
-- Most of that gain comes from step 1 (planning for deliveries) and step 4 (not making matches the requester will refuse). Shield-Net makes over a thousand refused matches per run.
-- Step 5 (core/excess) raises genuine need met (`need_fill`) from 0.60 to 0.66, by up to 0.16 on a seed, and cuts what over-askers receive beyond their need by about 40%. Bulk requests still get served, but only after everyone's core.
+**The bounds as LPs.** Both are one LP over all rounds $`t = 1..T`$, with shipments $`x_{tij}`$ on world-eligible pairs (variants overlap, within budget, certified if required, reachable), carried stock $`r_{it}`$ and credited need $`y_j`$. Let $`\pi_{tij}`$ be the delivered fraction of a shipped unit: in H2, $`\pi_{tij} = 1`$ and the pair exists only if its pre-drawn coin flip succeeds; in H1, $`\pi_{tij} = \psi^{\ast}_{g(i,j)}`$ on every eligible pair. Requester $`j`$ is available from its arrival round to the round its abandonment draw fires.
 
-**Value of learning.** Set the true $`\psi^{\ast}_{same} \in \lbrace 0.30, 0.40, 0.55\rbrace`$ and $`\psi^{\ast}_{cross} \in \lbrace 0.08, 0.16, 0.25\rbrace`$, so the prior is right or wrong in either direction. Compare `learn_psi` on vs off, and track how fast $`\hat\psi`$ converges.
+```math
+\begin{aligned}
+\max\quad & \sum_j \omega_j\, y_j && \text{(}\omega_j = 1\text{, or the level weights)}\\
+\text{s.t.}\quad & \sum_j x_{tij} \;\le\; s_i\,\Delta_t + r_{i,t-1} && \text{supply}\\
+& r_{it} \;\le\; \eta\Big(s_i\,\Delta_t + r_{i,t-1} - \sum_j \pi_{tij}\,x_{tij}\Big),\quad r_{it} \le h\,s_i && \text{carry-over (failed shipments return)}\\
+& \sum_i x_{tij} + \sum_{t' < t}\sum_i \pi_{t'ij}\,x_{t'ij} \;\le\; D^0_j && \text{ship at most what is still outstanding}\\
+& y_j \;\le\; \sum_{t,i} \pi_{tij}\,x_{tij},\qquad 0 \le y_j \le \min\big(D^0_j,\ u_{\ell_j}E_j\cdot 14\big) && \text{credited need}
+\end{aligned}
+```
 
-**Sensitivity sweeps** (one parameter at a time, from the PULSE defaults):
-- supply scale × {0.6, 1.0, 1.5} on the number of suppliers
-- $`P_{bulk} \in \lbrace 0, 0.005, 0.02\rbrace`$: how robust PULSE is to giant requests
-- $`H \in \lbrace 7, 14, 28\rbrace`$ days: how generous the core is
-- $`\eta \in \lbrace 0, 0.5, 1\rbrace`$
-- $`\omega \in \lbrace 0, 0.1, 0.2\rbrace`$
-- $`W \in \lbrace (1,10,100), (1,2,3)\rbrace`$
+Both relax integrality and the floor in the carry-over rule, so they remain upper bounds. They are solved with HiGHS on sparse matrices, once per target metric. The "ship at most what is outstanding" row matters: without it the fluid LP **overbooks** (ships about $`1/\psi`$ times the request and relies on failures), which no PULSE-class policy may do, and the bound rises to about 0.90 (5-seed check) instead of 0.67.
 
-**Headline comparisons:**
-- urgency-weighted genuine need met and expected fill, Shield-Net vs PULSE
-- genuine need met, and units received beyond need, with and without core/excess
-- fill of honest level-3 requesters
-- same-state share
-- stranded and abandoned demand
+**Results (30 seeds):**
 
-**Common random numbers.** The random numbers for match outcomes and abandonment are drawn up front: one per (round, supplier, requester) and one per (round, requester). A given match or exit therefore turns out the same under every configuration, so differences on the same seed come only from different decisions. This makes paired comparisons, like the ablation steps, much less noisy. A test checks it.
+| Policy | Need met | Urgency-weighted (1,10,100) | % of H1 (need met) | vs PULSE, need met |
+|---|---|---|---|---|
+| H2 perfect hindsight | 0.980 | 0.992 | — | +0.328 |
+| H1 clairvoyant fluid bound | 0.674 | 0.715 | 100% | +0.022 [0.014, 0.029] |
+| **PULSE** | **0.652** | **0.704** | **96.8%** | — |
+| Proportional rationing | 0.576 | 0.609 | 85.5% | −0.076, 30/30 |
+| FCFS (nearest supplier) | 0.573 | 0.609 | 85.0% | −0.079, 30/30 |
+| Shield-Net + filters | 0.524 | 0.605 | 77.7% | −0.129, 30/30 |
+| Random | 0.436 | 0.465 | 64.8% | −0.216, 30/30 |
+
+What this means:
+- **PULSE is close to the best possible without knowing the future** (96.8% of H1 on need met, 98.4% on urgency-weighted need met). A lookahead or rolling-horizon model could gain at most about 3%, so it was not built.
+- **The real headroom is in match failures**: H1 0.67 vs H2 0.98. Knowing *which* matches will fail is worth far more than knowing future arrivals.
+- Simple rules beat Shield-Net + filters, because Shield-Net does not weight by success probability; PULSE beats both by about 0.08.
+
+Figures: `bound_gap_need_fill.png`, `forest_benchmarks.png`.
+
+### 13.3 Value of learning $`\psi`$
+
+True $`\psi^{\ast}_{same} \in \lbrace 0.30, 0.40, 0.55\rbrace`$ × $`\psi^{\ast}_{cross} \in \lbrace 0.08, 0.16, 0.25\rbrace`$, learning on vs off, 30 seeds each.
+
+- **Learning estimates correctly:** the final $`\hat\psi`$ is within 0.01 of the truth in every cell (e.g. truth (0.55, 0.08) → learned (0.546, 0.081)).
+- **But it does not change outcomes:** the paired difference in need met is between −0.001 and +0.003 in every cell, never significant.
+- Why: urgency weights already fix most of the ordering, $`\hat\psi`$ only reorders within a level, supply is plentiful from round 4, and two class-level numbers cannot change *which* individual match fails. See Section 9 and the research directions in `CHANGES.md`.
+
+Figures: `forest_learning.png`, `learning_value.png`, `learning_trajectories.png`.
+
+### 13.4 Sensitivity sweeps
+
+One parameter at a time from the PULSE defaults; paired difference in need met vs the default value:
+
+| Change | Need met vs default | Seeds won | Reading |
+|---|---|---|---|
+| supply × 0.6 | −0.139 [−0.156, −0.122] | 0/30 | scarcity dominates everything |
+| supply × 1.5 | +0.049 [0.035, 0.063] | 28/30 | |
+| no abandonment ($`\omega = 0`$) | +0.081 [0.072, 0.090] | 30/30 | requesters leaving is a large loss |
+| $`\omega = 0.2`$ | −0.067 [−0.075, −0.059] | 0/30 | |
+| no carry-over ($`\eta = 0`$) | −0.067 [−0.075, −0.060] | 0/30 | carried stock matters |
+| full carry-over ($`\eta = 1`$) | +0.033 [0.026, 0.041] | 28/30 | |
+| core horizon $`H = 7`$ days | −0.013 [−0.019, −0.007] | 8/30 | a too-tight core costs a little |
+| $`H = 28`$ days | −0.001 (n.s.) | | |
+| bulk probability 0 or 0.02 | ≈ 0 (n.s.) | | **robust to giant requests** |
+| weights (1, 2, 3) | +0.001 (n.s.) | | total need met barely depends on $`W`$ |
+
+Figures: `forest_sweeps.png`, `sweeps.png`.
+
+### 13.5 Headline numbers for a report
+
+| | Value |
+|---|---|
+| Need met, PULSE vs Shield-Net + filters | 0.652 vs 0.524 (+0.13, 30/30 seeds) |
+| Share of the clairvoyant bound achieved | 96.8% (need met), 98.4% (urgency-weighted) |
+| Units delivered beyond genuine need | 21,388 vs 45,068 without core/excess (−53%) |
+| Same-state share of units | 0.50 vs 0.27 (Shield-Net + filters) |
+
+### 13.6 Real-data case study: medical oxygen, 21 April 2021
+
+`python scripts/oxygen_case.py` (data and provenance in `data/oxygen/README.md`).
+
+**Data.** Official per-state oxygen **demand** and **allocation** (MT/day) for the allocation orders of 15, 18 and 21 April 2021 (19 states; Rajya Sabha Unstarred Q.1056, answered 12 Dec 2023, Ministry of Health and Family Welfare, Annexure), joined to **active COVID-19 cases** per state on the same date (covid19india). On 21 April total allocation was 6,722 MT against total demand 6,721 MT.
+
+**Set-up.** Each state is a requester with request $`D_j`$ = its stated demand. Genuine need follows the government's own stated basis (active caseload): $`N_j = m \cdot k \cdot \text{active}_j`$, with $`k = 3.25`$ MT per 1,000 active cases (total allocation / total active cases on 21 April). Because supply equalled demand that day, every rule that never exceeds a request gives the same answer at full supply, so supply is scaled to $`s \times`$ total demand to compare rules under **shortage**. PULSE plans with $`m = 1`$; outcomes are also evaluated at $`m = 0.75`$ and $`1.25`$ (a wrong norm).
+
+| Rule | How it shares supply |
+|---|---|
+| Request pro-rata | every state gets the same fraction of what it asked for |
+| Caseload, capped | proportional to active cases, never above the request |
+| PULSE core/excess | core $`= \min(D_j, N_j)`$ served first (pro-rata), leftover to excess (pro-rata) |
+| Actual order | what the government allocated (full supply only) |
+
+**Requests did not track caseload.** Request ÷ caseload need: Gujarat 3.66, Delhi 2.53, Telangana 2.38, Andhra Pradesh 2.25, … Karnataka 0.52, Jammu and Kashmir 0.25, Kerala 0.20.
+
+**Share of need met** ($`m = 1`$):
+
+| Supply (share of demand) | Request pro-rata | Caseload, capped | PULSE core/excess | Actual order |
+|---|---|---|---|---|
+| 60% | 0.510 | 0.600 | 0.600 | |
+| 70% | 0.566 | 0.700 | 0.700 | |
+| 80% | 0.622 | 0.729 | 0.729 | |
+| 100% | 0.729 | 0.729 | 0.729 | 0.751 |
+
+What this means:
+- **Allocating by request rewards over-asking.** At 60–80% supply, request pro-rata meets 9–13 points less need and sends 600–1,200 MT to states already above their caseload need. Any need-based rule fixes most of this.
+- **With a single pooled supply, PULSE matches simple caseload rationing on total need met**; it differs only in which states fall short. PULSE's distinct features (distance, success probability) need supply-side data (oxygen production by state or plant), which this case does not yet have.
+- **Under-asking caps every request-bounded rule at 0.73.** The actual order reached 0.75 by giving some states more than they asked (Maharashtra 1,661 vs 1,500 MT; Madhya Pradesh 543 vs 445 MT).
+- Robustness: if the true norm is 25% lower than PULSE assumes ($`m = 0.75`$, 70% supply), caseload rationing is slightly ahead (0.855 vs 0.835); request pro-rata is far behind (0.694).
+
+**Limitations.** Need ignores case severity (ICU and oxygen-bed share); $`k`$ is calibrated from the same allocation; one date and 19 states make this an illustration, not a statistical test.
+
+### 13.7 Common random numbers
+
+The random numbers for match outcomes and abandonment are drawn up front: one per (round, supplier, requester) and one per (round, requester). A given match or exit therefore turns out the same under every configuration, so differences on the same seed come only from different decisions. This makes paired comparisons, like the ablation steps, much less noisy. Heuristic policies use their own random stream, so they do not disturb these draws. A test checks it.
 
 ---
 
@@ -499,23 +622,29 @@ Indicative result (10 seeds, placeholder data; report your own 20-seed numbers, 
 11. **Behavioural parameters are constant over time.** $`\eta, \omega`$ do not change over the horizon. Panic, media coverage and government action would make them vary; we sweep them instead of modelling that.
 12. **Urgency weights are a value judgement.** Under $`W = (1,10,100)`$, urgency always outranks locality across levels.
 13. **The two-week horizon truncates demand.** Demand still outstanding after round 6 is reported, not resolved.
-14. **The synthetic data is not validated** against real Indian demand or supplier data. Only the request-size mean, the supplier variant mix and $`\psi`$ are anchored to the paper.
+14. **The synthetic data is not validated** against real Indian demand or supplier data. Only the request-size mean, the supplier variant mix and $`\psi`$ are anchored to the paper. The district file is still the placeholder; real geography is open work.
+15. **Never more than the request.** A requester receives at most what it asked for. The oxygen case (13.6) shows real requesters also *under*-ask (Kerala requested about 0.2× its caseload need), which no request-capped rule can correct.
+16. **The benchmark bounds relax the world slightly** (fractional shipments, no floor in carry-over), so the true best achievable is a little below them; PULSE's 96.8% is therefore a conservative figure.
 
 ---
 
 ## 15. Implementation notes
 
 - **PuLP version:** pinned to **3.3.2**. PuLP 4.x (what a plain `pip install pulp` now gives) changed the modelling API and no longer bundles the CBC solver, so this code would not run on it unchanged.
-- **Solver:** CBC, bundled with PuLP 3.3.2. `--set solver=highs` switches to HiGHS (needs `pip install highspy`); the model is unchanged.
+- **Solver:** CBC, bundled with PuLP 3.3.2. `--set solver=highs` switches to HiGHS (needs `pip install highspy`); the model is unchanged. The benchmark bounds use scipy's HiGHS on sparse matrices (about 130k variables for H1).
+- **Policies:** `--set policy=fcfs|proportional|random` replaces the round LP by a benchmark rule; `lp` (default) is PULSE or Shield-Net depending on the switches.
 - **Eligibility** is built with vectorised NumPy operations over (enrolled suppliers × active requesters): about 15–32 thousand allowed pairs per round on the placeholder data. A core variable is created on a pair only if the requester has core left, and an excess variable only if it has excess.
 - **Fast model building:** the objective and row sums use `pulp.LpAffineExpression` from prebuilt lists, not nested `lpSum`, which is slow at this size.
 - **Integers everywhere:** $`s_i`$, $`A_{i,\tau}`$, $`D_{j,\tau}`$, $`C_{j,\tau}`$, $`X_{j,\tau}`$ and $`r_{i,\tau}`$. The LP solution is asserted integral, then rounded.
 - **Reproducibility:** one master seed, with separate `numpy.random.Generator` streams for supplier generation, requester generation, match outcomes and abandonment. Changing a policy parameter never changes the generated instance or the random numbers. Runs are exactly reproducible.
 - **Checks every round** (`check_invariants`, on by default): supply, core and excess limits; no idle usable edge (7.1); integrality (7.3); core before excess (7.4); every edge value positive (C1).
-- **Tests** (`python -m pytest`, about 5 seconds):
+- **Tests** (`python -m pytest`, 45 tests, about 10 seconds):
   - model: integrality and no idle edge, optimality against an independent scipy solve, urgency dominance, core before excess, excess by priority once core is met
   - loader: placeholder loads, diagonal in [10, 20], file order doesn't matter, blank pairs never matched, bad files rejected, cache round-trip
   - simulation: conservation of demand, core and excess add up to demand, core/excess off treats all demand as core, inflating a request gains no core, the instance is independent of policy, learning moves toward the truth, learning off keeps the prior, (C1) rejected, reproducibility, common random numbers, refused matches never deliver
+  - statistics (`test_stats.py`): t-interval against a hand calculation, all-zero and too-few-seed cases, Holm correction, pairing by seed
+  - benchmarks (`test_benchmarks.py`): heuristics respect limits and serve core first, FCFS order, proportional equal shares, invariants hold for every heuristic, **perfect hindsight ≥ every policy**, fluid bound ≥ mean policy, reproducibility
+  - oxygen case (`test_oxygen_case.py`): capped proportional split, core before excess, the real data loads and sums to the printed 6,722 MT
 
 ---
 
@@ -523,7 +652,15 @@ Indicative result (10 seeds, placeholder data; report your own 20-seed numbers, 
 
 ### Setup (once)
 
-Python 3.10 or newer. In PowerShell (Windows):
+Python 3.10 or newer. With conda (Linux, macOS or Windows):
+
+```bash
+conda create -n pulse python=3.12 -y
+conda activate pulse
+pip install -r requirements.txt
+```
+
+Or with a plain virtual environment in PowerShell (Windows):
 
 ```powershell
 cd "C:\path\to\MSO-103_PULSE_Matching"
@@ -548,10 +685,15 @@ In every new terminal after that: `cd` to the folder and activate the venv again
 | `pulse/model.py` | the round LP in PuLP (Section 6) |
 | `pulse/simulation.py` | the six-round loop (Sections 5 and 8) |
 | `pulse/metrics.py` | per-round records and run summaries (Section 10) |
+| `pulse/stats.py` | paired statistics: CIs, Wilcoxon, Holm, effect sizes (Section 13) |
+| `pulse/benchmarks.py` | heuristic policies and the H1/H2 bounds (Section 13.2) |
+| `scripts/oxygen_case.py` | the 2021 oxygen case study (Section 13.6) |
+| `data/oxygen/` | oxygen demand/allocation and active cases, with provenance notes |
+| `CHANGES.md` | log of every change and decision since the course submission |
 | `run.py` | one simulation, printed round by round |
-| `experiments.py` | ablation, sweeps and learning suites (Section 13) |
+| `experiments.py` | ablation, sweeps, learning and benchmark suites (Section 13) |
 | `plots.py` | figures from the experiment results |
-| `tests/` | the Section 7 properties and loader checks |
+| `tests/` | the Section 7 properties, loader, statistics, benchmark and oxygen checks |
 
 ### Commands
 
@@ -566,7 +708,11 @@ python run.py --out results/run2       # keep this run's output separately
 python experiments.py --suite ablation --seeds 5
 python experiments.py --suite sweeps   --seeds 5
 python experiments.py --suite learning --seeds 5
-python experiments.py --suite all      --seeds 20 --jobs 4   # the full set for the report
+python experiments.py --suite benchmarks --seeds 5   # PULSE vs bounds and simple rules (pulse/benchmarks.py)
+python experiments.py --suite all      --seeds 30 --jobs 4   # the full set for the report
+
+# real-data oxygen case study; results go to results/oxygen/
+python scripts/oxygen_case.py
 
 # figures from whatever is in results/
 python plots.py
@@ -600,8 +746,10 @@ Measured on a 2-core Linux machine:
 | `--suite ablation`, per seed | ~30 s |
 | `--suite sweeps`, per seed | ~50 s |
 | `--suite learning`, per seed | ~55 s |
-| `--suite all --seeds 20` | ~45 min with `--jobs 1`; divide by the number of jobs |
-| `python -m pytest` | ~5 s |
+| `--suite benchmarks`, per seed | ~2 min (the H1 bound LP takes ~70–100 s) |
+| `--suite all --seeds 30` | ~80 min with `--jobs 4` |
+| `python scripts/oxygen_case.py` | < 1 s |
+| `python -m pytest` | ~10 s |
 
 Most of a run's time is PuLP writing each round's model to a file and starting CBC, not the solve itself. Use `--jobs` up to your number of cores minus one.
 
@@ -611,9 +759,12 @@ Most of a run's time is PuLP writing each round's model to a file and starting C
 - `results/<suite>_runs.csv`: one row per configuration and seed.
 - `results/<suite>_rounds.csv`: one row per configuration, seed and round.
 - `results/<suite>_table.csv`: mean and standard deviation per configuration; the table for the report.
+- `results/<suite>_paired.csv`: paired per-seed differences against each suite's reference (mean, 95% t-CI, bootstrap CI, Wilcoxon and Holm-adjusted p, effect size d_z, share of seeds won). See `CHANGES.md`.
+- `results/benchmarks_gap.csv`: share of each bound (H1, H2) every policy reaches.
+- `results/oxygen/oxygen_rules.csv`, `oxygen_per_state.csv`: from `scripts/oxygen_case.py`.
 - `results/figures/*.png`: from `plots.py`.
 
-**Use many seeds.** Most matches fail (the success probabilities are 0.16–0.40) and a single match can be thousands of units, so one seed's realised fill is noisy. Differences between configurations at 1–2 seeds are mostly luck. Use at least 20 seeds for anything you report, and look at `exp_fill_nonbulk` alongside the realised fills.
+**Use many seeds.** Most matches fail (the success probabilities are 0.16–0.40) and a single match can be thousands of units, so one seed's realised fill is noisy. Differences between configurations at 1–2 seeds are mostly luck. Use at least 30 seeds for anything you report (`ci_convergence.png` shows how the CI narrows), and look at `exp_fill_nonbulk` alongside the realised fills.
 
 ### Cleaning up
 

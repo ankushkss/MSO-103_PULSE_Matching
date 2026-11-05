@@ -42,48 +42,111 @@ In words: send as many units as possible, most urgent first, and use distance on
 
 ## 2. The PULSE model
 
-### 2.1 The problem solved each round
+### 2.1 The idea in one paragraph
 
-Each requester's outstanding request is split into **core** $`C_j`$ (its genuine need not yet received) and **excess** $`X_j`$ (the rest). Each allowed supplier–requester pair has a core flow $`x^c_{ij}`$ and an excess flow $`x^e_{ij}`$; the supplier ships their sum.
+Three times a week, the platform looks at every supplier's stock and every requester's outstanding request and decides **how many units each supplier should send to each requester**. It prefers shipments that are **urgent** (a COVID ward before a grocery store) and **likely to actually arrive** (same-state matches succeed more often). Each request is split into the part the facility **genuinely needs** and the **rest**; all genuine need is served before any of the rest. Distance, price and certification only break ties.
 
-```math
-\begin{aligned}
-\max_{x^c,\,x^e}\quad & \sum_{(i,j)\in E} \big(p_j\,\hat\psi_{ij} - c_{ij}\big)\,\big(x^c_{ij} + \varepsilon\,x^e_{ij}\big)\\
-\text{s.t.}\quad & \sum_j \big(x^c_{ij} + x^e_{ij}\big) \le A_i && \forall i && \text{(supply)}\\
-& \sum_i x^c_{ij} \le C_j && \forall j && \text{(core)}\\
-& \sum_i x^e_{ij} \le X_j && \forall j && \text{(excess)}\\
-& x^c_{ij},\ x^e_{ij} \ge 0 && \forall (i,j) \in E
-\end{aligned}
-```
+### 2.2 What the model decides
 
-Same structure as Shield-Net: flows on supplier–requester pairs, one supply limit per supplier, demand limits per requester. What changes is what goes into it:
+For every allowed supplier–requester pair $`(i, j)`$ there are two numbers to choose:
 
-| Term | Meaning | How it is computed |
+| Decision variable | Meaning |
+|---|---|
+| $`x^c_{ij} \ge 0`$ | units from supplier $`i`$ that go towards requester $`j`$'s **genuine need** (core) |
+| $`x^e_{ij} \ge 0`$ | units from supplier $`i`$ that go towards the **rest** of $`j`$'s request (excess) |
+
+The supplier ships $`x_{ij} = x^c_{ij} + x^e_{ij}`$ units in total.
+
+### 2.3 What the model is given each round
+
+| Input | Meaning | Where it comes from |
 |---|---|---|
-| $`E`$ | the pairs that are allowed to match | Section 3, issues 4–6 and 9 |
-| $`p_j`$ | urgency weight | $`W[\ell_j]`$ with $`W = (1, 10, 100)`$ and $`\ell_j \in \lbrace 1,2,3\rbrace`$ from facility type |
-| $`\hat\psi_{ij}`$ | estimated probability that the match is actually delivered | $`\hat\psi_{same}`$ if supplier and requester are in the same state, else $`\hat\psi_{cross}`$ |
-| $`c_{ij}`$ | small tie-break cost | $`\tilde\alpha\,\hat c_{ij} + \beta\,\rho_{ij} + \mu\,\mathbf{1}[\kappa_j = 1](1 - q_i)`$: distance, price, uncertified stock |
-| $`A_i`$ | stock the supplier has this round | $`s_i \Delta + r_i`$: daily rate × days since the last round, plus carried stock |
-| $`C_j`$ | core: genuine need not yet received | $`\min\big(D_j,\ \max(0,\ \lfloor u_{\ell_j} E_j H - G_j \rfloor)\big)`$ |
-| $`X_j`$ | excess: the rest of the request | $`D_j - C_j`$ |
-| $`\varepsilon`$ | value of an excess unit relative to a core unit | $`10^{-4}`$, small enough that any core unit beats any excess unit |
+| $`A_i`$ | stock supplier $`i`$ can ship this round | daily rate × days since last round + carried stock: $`A_i = s_i\,\Delta + r_i`$ |
+| $`C_j`$ | requester $`j`$'s **core**: genuine need not yet received | $`C_j = \min\big(D_j,\ \max(0,\ \lfloor N_j - G_j \rfloor)\big)`$ with $`N_j = u_{\ell_j} E_j H`$ |
+| $`X_j`$ | requester $`j`$'s **excess**: the rest of its request | $`X_j = D_j - C_j`$ |
+| $`E`$ | pairs allowed to match | variants overlap **and** price within budget **and** certified if required **and** reachable by road |
+| $`p_j`$ | urgency weight | 1 / 10 / 100 for essential non-healthcare / other healthcare / treating the emergency |
+| $`\hat\psi_{ij}`$ | chance the shipment actually arrives | 0.40 if same state, 0.16 if not (then learned from outcomes) |
+| $`c_{ij}`$ | small tie-break cost | distance + price + "uncertified but certified preferred" (at most 0.024) |
+| $`\varepsilon`$ | value of an excess unit relative to a core unit | $`10^{-4}`$ |
 
-Here $`D_j`$ is the requester's outstanding request, $`E_j`$ its staff count, $`u_{\ell}`$ the plausible usage per staff per day for its facility type, $`H`$ the number of days of need counted as genuine, and $`G_j`$ what it has received so far.
+Here $`D_j`$ is the outstanding request, $`E_j`$ the staff count, $`u_{\ell}`$ the usage norm per staff per day, $`H = 14`$ days, and $`G_j`$ what the requester has already received.
 
-The objective is the **expected urgency-weighted delivery of genuine need**, with excess served only from stock left over, by the same priorities.
+### 2.4 The objective, term by term
 
-### 2.2 Between rounds
-
-The platform updates its success estimates from the outcomes it has observed:
+**Value of one unit** shipped on pair $`(i,j)`$:
 
 ```math
-\hat\psi_g = \max\left(\psi_{floor},\ \frac{n_0\,\psi^0_g + S_g}{n_0 + S_g + F_g}\right), \qquad g \in \lbrace \text{same}, \text{cross} \rbrace
+w_{ij} \;=\; \underbrace{p_j}_{\text{how urgent}} \;\times\; \underbrace{\hat\psi_{ij}}_{\text{chance it arrives}} \;-\; \underbrace{c_{ij}}_{\text{tie-break}}
 ```
 
-where $`S_g`$ and $`F_g`$ count successful and failed matches so far. Delivered units are added to each requester's $`G_j`$, and unserved demand carries over to the next round, as in Shield-Net.
+So $`p_j\,\hat\psi_{ij}`$ is the **expected urgency-weighted delivery** of that unit. An excess unit is worth the same, multiplied by the tiny $`\varepsilon`$.
 
-### 2.3 Default values
+**Objective:** maximise the total value of everything shipped,
+
+```math
+\max \quad \sum_{(i,j)\in E} w_{ij}\,x^c_{ij} \;+\; \varepsilon \sum_{(i,j)\in E} w_{ij}\,x^e_{ij}
+```
+
+The ranking this produces (prior $`\hat\psi`$, ignoring tie-breaks):
+
+| Value of one core unit | same state ($`\hat\psi = 0.40`$) | other state ($`\hat\psi = 0.16`$) |
+|---|---|---|
+| Level 3: treating the emergency ($`p = 100`$) | **40** | **16** |
+| Level 2: other healthcare ($`p = 10`$) | 4.0 | 1.6 |
+| Level 1: essential non-healthcare ($`p = 1`$) | 0.40 | 0.16 |
+| Any excess unit | at most 0.01 | |
+
+Read down the table: **urgency always wins** (the worst level-3 unit, 16, beats the best level-2 unit, 4.0). Read across: **within a level, same-state wins** (2.5×). Read the last row: **any core unit beats any excess unit**.
+
+### 2.5 The constraints, in words
+
+| # | Constraint | In words |
+|---|---|---|
+| (1) | $`\displaystyle\sum_{j} \big(x^c_{ij} + x^e_{ij}\big) \le A_i`$ for every supplier $`i`$ | a supplier cannot ship more than it has |
+| (2) | $`\displaystyle\sum_{i} x^c_{ij} \le C_j`$ for every requester $`j`$ | a requester's genuine need is filled at most once |
+| (3) | $`\displaystyle\sum_{i} x^e_{ij} \le X_j`$ for every requester $`j`$ | the rest of the request is filled at most once |
+| (4) | $`x^c_{ij},\ x^e_{ij} \ge 0`$, and only for allowed pairs $`(i,j) \in E`$ | no negative shipments; no shipments on forbidden pairs |
+
+### 2.6 The full model
+
+```math
+\boxed{
+\begin{aligned}
+\max_{x^c,\,x^e}\quad & \sum_{(i,j)\in E} w_{ij}\,\big(x^c_{ij} + \varepsilon\,x^e_{ij}\big), \qquad w_{ij} = p_j\,\hat\psi_{ij} - c_{ij}\\[4pt]
+\text{subject to}\quad & \sum_j \big(x^c_{ij} + x^e_{ij}\big) \le A_i && \forall i && \text{(1) supply}\\
+& \sum_i x^c_{ij} \le C_j && \forall j && \text{(2) core}\\
+& \sum_i x^e_{ij} \le X_j && \forall j && \text{(3) excess}\\
+& x^c_{ij},\ x^e_{ij} \ge 0 && \forall (i,j) \in E && \text{(4)}
+\end{aligned}
+}
+```
+
+It has the same shape as Shield-Net (one supply row per supplier, demand rows per requester), so it stays a **transportation LP**: totally unimodular, so the solution is in whole units, solved exactly in about half a second per round (Section 4).
+
+### 2.7 A worked example
+
+One supplier in **Maharashtra** has $`A = 100`$ units. Three requesters, each with core only:
+
+| Requester | State | Level | Core $`C_j`$ | Value of one unit $`w`$ |
+|---|---|---|---|---|
+| COVID ward | Maharashtra (same) | 3 | 60 | $`100 \times 0.40 = 40`$ |
+| Clinic | Gujarat (other) | 2 | 80 | $`10 \times 0.16 = 1.6`$ |
+| Grocery store | Maharashtra (same) | 1 | 50 | $`1 \times 0.40 = 0.40`$ |
+
+The LP fills the highest values first: **COVID ward 60**, then **clinic 40** (the remaining stock), **grocery 0**. The clinic is in another state and less likely to receive the shipment, yet it still beats the nearby grocery store, because urgency dominates locality across levels. Shield-Net, with weights 1/2/3, would have scored the same-state grocery store at 0.40 vs the cross-state clinic at 0.32 if $`\psi`$ were added to it, putting the grocery store first.
+
+### 2.8 Between rounds: learning $`\hat\psi`$
+
+After each round the platform counts, per class $`g \in \{\text{same}, \text{cross}\}`$, the matches that succeeded ($`S_g`$) and failed ($`F_g`$), and updates its estimate (a Beta posterior mean with the paper's value as prior worth $`n_0 = 20`$ matches):
+
+```math
+\hat\psi_g \;=\; \max\left(\psi_{floor},\ \frac{\overbrace{n_0\,\psi^0_g}^{\text{prior}} + \overbrace{S_g}^{\text{successes}}}{n_0 + S_g + F_g}\right)
+```
+
+Delivered units are added to each requester's $`G_j`$ (so its core shrinks), and unserved demand carries over to the next round.
+
+### 2.9 Default values
 
 | Parameter | Value | Where it comes from |
 |---|---|---|
@@ -116,7 +179,7 @@ The model now maximises expected deliveries. A same-state unit (0.40) is worth 2
 
 **In Shield-Net.** Not modelled at all. And the 0.40 and 0.16 PULSE starts from are US numbers, which may not hold in India.
 
-**In PULSE.** They are a starting point, not a fixed assumption. After each round, $`\hat\psi_g`$ is updated with the formula in 2.2. Early on, it stays close to the paper's values. As outcomes accumulate, it moves toward what is actually observed. The model itself is unchanged; it simply reads the new $`\hat\psi`$ next round.
+**In PULSE.** They are a starting point, not a fixed assumption. After each round, $`\hat\psi_g`$ is updated with the formula in 2.8. Early on, it stays close to the paper's values. As outcomes accumulate, it moves toward what is actually observed. The model itself is unchanged; it simply reads the new $`\hat\psi`$ next round.
 
 Real values for India need real delivery records; in this project the mechanism is demonstrated in simulation.
 
@@ -234,3 +297,18 @@ A_i = s_i\,\Delta + r_i
 - **Genuine need is an estimate.** It rests on assumed usage rates per facility type and on truthful staff counts. A facility that really uses more than its type's norm is still served in full eventually; the part above the norm just waits behind others' core.
 - **Excess is shared by priority, not proportionally.** Leftover stock goes to excess in the same urgency and locality order as core, rather than giving every requester the same number of days of buffer stock.
 - **Outcomes are not decided by the model.** Whether a match succeeds, whether a requester refuses it, whether a requester gives up, and how much unsold stock survives are all part of the **simulation** used to test PULSE. They are not part of the optimisation; see `README.md`.
+- **Never more than the request.** Each requester gets at most what it asked for. In the 2021 oxygen data some states asked for far less than their caseload suggested (Kerala about 0.2×), and no request-capped rule can correct that (README Section 13.6).
+
+---
+
+## 6. How well it works (summary; details in README Section 13)
+
+| Question | Answer (30 paired seeds, placeholder data) |
+|---|---|
+| Better than Shield-Net? | Need met 0.37 → 0.65; better on 30/30 seeds |
+| Better than Shield-Net given the same price/certificate filters? | +0.13 need met [95% CI 0.10, 0.16], 30/30 seeds |
+| How close to the best achievable without knowing the future? | **96.8%** of the clairvoyant bound (need met) |
+| Better than simple rules (proportional, first-come-first-served)? | +0.08 need met, 30/30 seeds |
+| Does learning $`\hat\psi`$ help? | It converges to the truth (within 0.01) but changes outcomes by < 0.003 |
+| Real data (oxygen, 21 April 2021)? | Need-based rules meet 0.60–0.73 of need vs 0.51–0.62 for request pro-rata when supply is 60–80% of demand |
+

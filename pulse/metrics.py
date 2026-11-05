@@ -16,6 +16,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from .simulation import Simulation
 
 REF_W = np.array([1.0, 10.0, 100.0])
+# Shield-Net-style weights, so the headline is not judged only by PULSE's own W (CHANGES.md D5)
+ALT_W = np.array([1.0, 2.0, 3.0])
 
 
 class MatchLog:
@@ -130,7 +132,10 @@ def run_summary(sim: "Simulation") -> dict:
     met = np.minimum(got, genuine)
     out["need_fill"] = _ratio(met[arrived].sum(), genuine[arrived].sum())
     out["wneed_fill_ref"] = _ratio((wts * met)[arrived].sum(), (wts * genuine)[arrived].sum())
+    alt = ALT_W[lvl - 1]
+    out["wneed_fill_w123"] = _ratio((alt * met)[arrived].sum(), (alt * genuine)[arrived].sum())
     out["excess_received"] = int(np.maximum(0, got - genuine)[arrived].sum())
+
     out["served_share_nonbulk"] = _ratio(((sim.status == 2) & nonbulk).sum(), nonbulk.sum())
     out["over_askers"] = int((sim.over_asker & arrived).sum())
     out["units_abandoned"] = int(sim.abandoned_units.sum())
