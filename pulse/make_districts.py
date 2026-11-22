@@ -1,12 +1,4 @@
-"""Placeholder district workbook (README Section 2.1).
-
-Writes an Excel file in exactly the format the real data must follow:
-  sheet `districts`: district_id, name, state, population
-  sheet `distances`: |K| x |K| road distances in km, IDs as row and column headers
-
-Usage:
-    python -m pulse.make_districts data/placeholder.xlsx [--n 800] [--states 36] [--seed 7]
-"""
+# Synthetic district workbook for tests: python -m pulse.make_districts out.xlsx
 from __future__ import annotations
 
 import argparse
@@ -60,7 +52,7 @@ def make_placeholder(path: str, n: int = 800, n_states: int = 36, seed: int = 7,
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path", nargs="?", default="data/placeholder.xlsx")
     ap.add_argument("--n", type=int, default=800)
     ap.add_argument("--states", type=int, default=36)

@@ -1,5 +1,3 @@
-"""Properties from README Section 7. The simulation also asserts them every round
-(check_invariants=True), so a clean run is itself a test; these add direct checks."""
 import numpy as np
 import pytest
 from scipy.optimize import linprog
@@ -18,7 +16,7 @@ def test_runs_with_all_invariants(small_cfg, districts, seed):
 
 
 def _toy():
-    # 2 suppliers, 2 requesters, all 4 edges; requester 1 has 50 units of excess
+    # suppliers, 2 requesters, all 4 edges; requester 1 has 50 units of excess
     return RoundProblem(e_sup=np.array([0, 0, 1, 1]), e_req=np.array([0, 1, 0, 1]),
                         w=np.array([3.0, 1.0, 2.0, 1.5]), A=np.array([150, 200]),
                         C=np.array([120, 70]), X=np.array([0, 50]))
@@ -33,7 +31,7 @@ def test_integral_and_no_idle_edge():
     D = P.C + P.X
     assert (sup <= P.A).all() and (req <= D).all()
     idle = (P.A[P.e_sup] - sup[P.e_sup] > 0) & (D[P.e_req] - req[P.e_req] > 0)
-    assert not idle.any()                                          # README 7.1
+    assert not idle.any()
 
 
 def test_optimal_against_scipy():
@@ -52,12 +50,10 @@ def test_optimal_against_scipy():
         M[nS + nR + e_req, E + np.arange(E)] = 1
         ref = linprog(-np.r_[P.w, P.eps * P.w], A_ub=M, b_ub=np.r_[A, C, X],
                       bounds=[(0, None)] * (2 * E), method="highs")
-        assert abs(-ref.fun - sol.objective) <= 1e-6 * max(1, abs(ref.fun))   # README 7.3
+        assert abs(-ref.fun - sol.objective) <= 1e-6 * max(1, abs(ref.fun))
 
 
 def test_urgency_dominates_locality():
-    # one supplier with 100 units; a level-1 same-state requester and a
-    # level-2 cross-state requester. With W = (1, 10, 100) level 2 must win.
     w_l1_same = 1 * 0.40 - 0.01
     w_l2_cross = 10 * 0.16 - 0.01
     P = RoundProblem(e_sup=np.array([0, 0]), e_req=np.array([0, 1]),
@@ -68,9 +64,6 @@ def test_urgency_dominates_locality():
 
 
 def test_core_before_excess():
-    # one supplier with 100 units. Requester 0: level 1, 60 core. Requester 1: level 3,
-    # 0 core and 100 excess (an over-asker). Core must be served first, even though
-    # requester 1 is more urgent: 60 core to requester 0, the remaining 40 as excess.
     P = RoundProblem(e_sup=np.array([0, 0]), e_req=np.array([0, 1]),
                      w=np.array([1 * 0.40 - 0.01, 100 * 0.40 - 0.01]),
                      A=np.array([100]), C=np.array([60, 0]), X=np.array([0, 100]))

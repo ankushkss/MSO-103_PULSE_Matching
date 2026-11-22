@@ -538,7 +538,7 @@ Indicative result (10 seeds, on the shipped district data; report your own 20-se
 Python 3.10 or newer. In PowerShell (Windows):
 
 ```powershell
-cd "C:\path\to\MSO-103_PULSE_Matching"
+cd "C:\path\to\PULSE"
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -576,6 +576,9 @@ python run.py                          # seed 1
 python run.py --seed 3
 python run.py --set H=7 --set "W=(1,2,3)" --set omega=0   # override parameters
 python run.py --out results/run2       # keep this run's output separately
+python run.py --model shieldnet        # the paper's original LP on the same world
+python run.py --show 10                # also list round 1's 10 largest matches
+python run.py --summary                # also print every summary metric
 
 # experiment suites; results go to results/
 python experiments.py --suite ablation --seeds 5

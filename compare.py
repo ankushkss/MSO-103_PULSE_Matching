@@ -1,12 +1,4 @@
-"""Shield-Net vs PULSE on the same simulated world, as one figure.
-
-    python compare.py               # seed 1
-    python compare.py --seed 3
-
-Runs the paper's model (ablation step 0) and full PULSE on the SAME seed, so both see
-the same suppliers, requesters and random match outcomes; only the decision model differs.
-Writes results/compare/compare_seed<N>.png and compare_seed<N>.csv.
-"""
+# Shield-Net vs PULSE on the same seed: python compare.py [--seed N]
 from __future__ import annotations
 
 import argparse
@@ -16,19 +8,19 @@ import os
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-from experiments import ablation_suite  # noqa: E402
-from plots import INK, INK_2, SERIES  # noqa: E402  (also applies the shared plot style)
-from pulse import Config, Simulation, load_districts, parse_overrides  # noqa: E402
+from experiments import ablation_suite
+from plots import INK, INK_2, SERIES
+from pulse import Config, Simulation, load_districts, parse_overrides
 
 GREY = "#9a9893"
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--data", default="data/districts.xlsx")
     ap.add_argument("--out", default="results/compare")
@@ -52,14 +44,14 @@ def main() -> None:
     cols = {"Shield-Net": GREY, "PULSE": SERIES[0]}
     fig, ax = plt.subplots(2, 2, figsize=(10, 7))
 
-    # 1. cumulative deliveries
+    # cumulative deliveries
     a1 = ax[0, 0]
     for name, df in rounds.items():
         a1.plot(df["round"], df["delivered"].cumsum() / 1000, marker="o", lw=2, ms=5, color=cols[name], label=name)
     a1.set_title("Units actually delivered (cumulative)", loc="left", color=INK)
     a1.set_xlabel("round"); a1.set_ylabel("thousand units"); a1.legend(loc="upper left")
 
-    # 2. allocated vs delivered: where the shipments go
+    # allocated vs delivered: where the shipments go
     a2 = ax[0, 1]
     names = list(rounds)
     alloc = [rounds[n]["allocated"].sum() / 1000 for n in names]
@@ -76,7 +68,7 @@ def main() -> None:
     a2.set_xlabel("thousand units, all rounds")
     a2.set_title("Plans vs outcomes", loc="left", color=INK)
 
-    # 3. headline metrics
+    # headline metrics
     a3 = ax[1, 0]
     mets = [("wneed_fill_ref", "urgency-weighted\nneed met"), ("need_fill", "genuine\nneed met"),
             ("fill_L3", "level-3\nfill"), ("exp_fill_nonbulk", "expected fill\n(non-bulk)")]
@@ -89,7 +81,7 @@ def main() -> None:
     a3.set_title("How much real need gets met", loc="left", color=INK)
     a3.legend(loc="upper right")
 
-    # 4. waste
+    # waste
     a4 = ax[1, 1]
     labels = ["units shipped in\nmatches that failed", "units to over-askers\nbeyond their need"]
     x = np.arange(len(labels))
@@ -116,8 +108,20 @@ def main() -> None:
     table.loc["refused_matches"] = [rounds[n]["refused_matches"].sum() for n in names]
     csv = os.path.join(a.out, f"compare_seed{a.seed}.csv")
     table.to_csv(csv)
-    with pd.option_context("display.float_format", "{:,.3f}".format):
-        print(table.to_string())
+    rows = [
+        ("Units delivered", lambda n: f"{summ[n]['delivered']:,}"),
+        ("Share of plan that arrived", lambda n: f"{rounds[n]['delivered'].sum() / rounds[n]['allocated'].sum():.0%}"),
+        ("Genuine need met", lambda n: f"{summ[n]['need_fill']:.0%}"),
+        ("Urgency-weighted need met", lambda n: f"{summ[n]['wneed_fill_ref']:.0%}"),
+        ("Level-3 (hospital) fill", lambda n: f"{summ[n]['fill_L3']:.0%}"),
+        ("Refused matches", lambda n: f"{int(rounds[n]['refused_matches'].sum()):,}"),
+        ("Units to over-askers beyond need", lambda n: f"{summ[n]['excess_received']:,}"),
+    ]
+    print(f"\n{'':34s}{'Shield-Net':>12s}{'PULSE':>12s}")
+    print("-" * 58)
+    for label, f_ in rows:
+        print(f"{label:34s}{f_('Shield-Net'):>12s}{f_('PULSE'):>12s}")
+    print()
     print("wrote", png, "and", csv)
 
 

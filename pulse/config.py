@@ -1,8 +1,4 @@
-"""All PULSE parameters in one place (README Section 3.3 and Section 11).
-
-Every field has the README default. Override with `Config(...)`, `cfg.with_(...)`,
-or `--set key=value` on the command line.
-"""
+# All parameters and their defaults
 from __future__ import annotations
 
 import ast
@@ -16,15 +12,15 @@ log = logging.getLogger("pulse")
 
 @dataclass(frozen=True)
 class Config:
-    # ---------------- data ----------------
+    # data
     data_path: str = "data/districts.xlsx"
     district_seed: int = 12345          # seeds the U[10,20] km diagonal fill
     r_intra_range: tuple = (10.0, 20.0)
 
-    # ---------------- horizon ----------------
+    # horizon
     days: tuple = (1, 3, 5, 8, 10, 12)  # round days; d_0 = -1, so gaps are (2,2,2,3,2,2)
 
-    # ---------------- policy ----------------
+    # policy
     W: tuple = (1.0, 10.0, 100.0)       # urgency weights for levels 1/2/3
     m_min: int = 50                     # platform minimum request size
     H: float = 14.0                     # days of plausible need counted as "core"
@@ -38,17 +34,17 @@ class Config:
     n0: float = 20.0                    # prior strength (pseudo-matches)
     psi_floor: float = 0.05             # lower clip on learned psi-hat
 
-    # ---------------- scenario (truth, unknown to the model) ----------------
+    # scenario (truth, unknown to the model)
     psi_true_same: Optional[float] = None   # None = equal to the prior
     psi_true_cross: Optional[float] = None
 
-    # ---------------- behavioural ----------------
+    # behavioural
     usage_rates: tuple = (0.25, 0.5, 1.0)   # plausible units per staff per day, levels 1/2/3
     eta: float = 0.5                    # share of unsold stock kept
     h: float = 5.0                      # storage cap in days of production
     omega: float = 0.10                 # abandonment probability per round
 
-    # ---------------- switches ----------------
+    # switches
     simulate_failures: bool = True
     learn_psi: bool = True
     use_psi_objective: bool = True      # False = Shield-Net style (psi-hat fixed at 1)
@@ -56,11 +52,11 @@ class Config:
     price_filter: bool = True
     cert_filter: bool = True
 
-    # ---------------- solver ----------------
+    # solver
     solver: str = "cbc"                 # "cbc" (bundled with PuLP 3.x) or "highs" (needs highspy)
-    check_invariants: bool = True       # assert the README Section 7 properties every round
+    check_invariants: bool = True
 
-    # ---------------- generator: suppliers ----------------
+    # generator: suppliers
     n_suppliers: int = 450
     supply_scale: float = 1.0           # multiplies the number of suppliers
     frac_enrol_round1: float = 0.7
@@ -71,14 +67,14 @@ class Config:
     cert_probs: tuple = (0.3, 0.5, 0.8)
     sup_variant_probs: tuple = (0.57, 0.10, 0.33)            # assembled only / kit only / both
 
-    # ---------------- generator: requesters ----------------
+    # generator: requesters
     arrivals_1: float = 120.0
     arrivals_decay: float = 0.7
     level_probs: tuple = (0.3, 0.4, 0.3)
     need_median: float = 400.0
     need_sigma: float = 1.4
     need_clip: tuple = (50, 100000)
-    need_days: float = 14.0             # days of need the generator sizes facilities by (world, not policy)
+    need_days: float = 14.0
     g_median: float = 2.0
     g_sigma: float = 0.5
     pmax_range: tuple = (30.0, 120.0)
@@ -88,7 +84,6 @@ class Config:
     p_bulk: float = 0.005
     bulk_range: tuple = (0.5, 1.5)
 
-    # ------------------------------------------------------------------
     @property
     def n_rounds(self) -> int:
         return len(self.days)
@@ -116,7 +111,6 @@ class Config:
         return replace(self, **kw)
 
     def validate(self) -> None:
-        """Start-up checks. Raises on (C1) or impossible generator settings."""
         if len(self.W) != 3 or any(w <= 0 for w in self.W):
             raise ValueError("W must be three positive weights")
         psi_min = self.psi_floor if self.use_psi_objective else 1.0
@@ -126,7 +120,7 @@ class Config:
             raise ValueError(
                 f"(C1) violated: alpha+beta+mu = {self.tie_break_max:.4f} must be < "
                 f"W[1]*psi_min = {self.W[0] * psi_min:.4f}")
-        # (C3): any core unit must beat any excess unit (psi_hat <= 1)
+        # any core unit must beat any excess unit (psi_hat <= 1)
         core_min = self.W[0] * psi_min - self.tie_break_max
         if self.core_excess and not self.excess_weight * self.W[2] * 1.0 < core_min:
             raise ValueError(
@@ -141,7 +135,6 @@ class Config:
 
 
 def parse_overrides(cfg: Config, pairs: list[str]) -> Config:
-    """Apply `key=value` strings (from --set) to a Config, with type checking."""
     if not pairs:
         return cfg
     valid = {f.name for f in fields(Config)}

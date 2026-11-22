@@ -1,20 +1,4 @@
-"""Clean the OSRM district workbook for PULSE.
-
-1. Re-place 3 mis-geocoded districts and add 5 missing ones. Their distances are
-   estimated from the nearest correctly placed district's routed row:
-       d(X, j) = H(X, j) * d(N, j) / H(N, j)
-   i.e. X inherits N's real road-detour factor to every destination.
-2. Blank the diagonal (PULSE fills it with U[10, 20] km).
-3. Blank island <-> mainland cells (no road link). Andaman & Nicobar districts stay
-   connected to each other; Lakshadweep connects to nothing but itself.
-4. Add a `notes` sheet documenting all of this.
-
-Run from the project root:  python data_prep/fix_excel.py data/districts.xlsx
-Inputs (in data_prep/): districts_osrm_raw.xlsx (output of webScraper.ipynb),
-districts_coordinates.csv, district_id_map.csv. Optional: a district-boundary GeoJSON
-at data_prep/districts.geojson (e.g. github.com/datta07/INDIAN-SHAPEFILES) to report which
-district polygon each re-placed point falls in; needs `pip install shapely`.
-"""
+# Rebuilds data/districts.xlsx from the raw OSRM output: python data_prep/fix_excel.py data/districts.xlsx
 import json, os, sys
 import numpy as np, pandas as pd
 from openpyxl import Workbook
@@ -53,7 +37,7 @@ def hav(lat1, lon1, lat2, lon2):
 ISLAND = xd.state.str.contains("Andaman|Lakshadweep").to_numpy()
 log = []
 
-# ---- check new points against district boundaries
+# check new points against district boundaries
 GEO = SRC + "districts.geojson"
 if os.path.exists(GEO):
     from shapely.geometry import shape, Point
@@ -68,7 +52,6 @@ else:
 
 
 def estimate_row(lat, lon, exclude):
-    """Distances from (lat, lon) to every current district, via nearest routed neighbour."""
     h_all = hav(lat, lon, xd.lat.to_numpy(), xd.lon.to_numpy())
     cand = np.where(~exclude & ~ISLAND)[0]
     n = cand[np.argmin(h_all[cand])]
@@ -83,7 +66,7 @@ def estimate_row(lat, lon, exclude):
     return est, n, med
 
 
-# ---- 1a. re-place mis-geocoded districts
+# 1a. re-place mis-geocoded districts
 bad = np.zeros(len(xd), bool)
 for name in FIXES: bad |= (xd.name == name).to_numpy()
 for name, (la, lo) in FIXES.items():
@@ -95,7 +78,7 @@ for name, (la, lo) in FIXES.items():
     log.append(f"{xd.district_id[i]} {name}: moved from ({old[0]:.3f}, {old[1]:.3f}) to ({la}, {lo}), now inside {where(la, lo)}; "
                f"distances estimated from {xd.name[n]} ({xd.district_id[n]}), median detour x{med:.2f}")
 
-# ---- 1b. add missing districts
+# 1b. add missing districts
 start = len(xd)
 for k, (name, state, la, lo) in enumerate(ADD):
     new_id = f"D{start + k + 1:03d}"
@@ -107,15 +90,13 @@ for k, (name, state, la, lo) in enumerate(ADD):
     ISLAND = np.append(ISLAND, False); bad = np.append(bad, True)
     log.append(f"{new_id} {name} ({state}): added at ({la}, {lo}), inside {where(la, lo)}; "
                f"distances estimated from {xd.name[n]} ({xd.district_id[n]}), median detour x{med:.2f}")
-# distances among the added districts themselves (and to fixed ones): use straight line x neighbour detour already in row;
-# make symmetric by averaging the two estimates
 M = np.where(np.isnan(M), M.T, M)
 M = (M + M.T) / 2
 
-# ---- 2. diagonal blank
+# 2. diagonal blank
 np.fill_diagonal(M, np.nan)
 
-# ---- 3. islands
+# 3. islands
 anda = xd.state.str.contains("Andaman").to_numpy()
 laks = xd.state.str.contains("Lakshadweep").to_numpy()
 mask = (anda[:, None] & ~anda[None, :]) | (~anda[:, None] & anda[None, :]) | laks[:, None] | laks[None, :]
@@ -125,7 +106,7 @@ n_island = int(np.triu(mask, 1).sum())
 log.append(f"Blanked {n_island} island pairs (Andaman & Nicobar <-> mainland, Lakshadweep <-> everything): no road link, PULSE treats blank as unreachable")
 log.append("Diagonal left blank: PULSE fills within-district distance with U[10, 20] km")
 
-# ---- checks
+# checks
 n = len(M); off = ~np.eye(n, dtype=bool)
 fin = np.isfinite(M)
 assert np.allclose(np.where(fin, M, 0), np.where(fin, M, 0).T), "not symmetric"
@@ -136,7 +117,7 @@ assert r.min() >= 0.999, r.min()
 print("\n".join(log))
 print(f"{n} districts, {int(np.triu(fin & off, 1).sum())} routed/estimated pairs, ratio median {np.median(r):.3f} min {r.min():.3f}")
 
-# ---- write
+# write
 wb = Workbook()
 wb._named_styles["Normal"].font = Font(name="Arial", size=10)
 ws = wb.active; ws.title = "districts"

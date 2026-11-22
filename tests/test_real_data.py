@@ -1,4 +1,3 @@
-"""The shipped district workbook (data/districts.xlsx) loads and is usable."""
 import os
 
 import numpy as np

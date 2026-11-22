@@ -1,21 +1,4 @@
-"""One round's optimisation model in PuLP (README Section 6).
-
-Each requester j has two demand rows: core C_j (genuine need) and excess X_j (the
-rest of its request). Each allowed pair (i, j) has a core flow and an excess flow:
-
-    max   sum_(i,j) in E  w_ij x^c_ij  +  eps * w_ij x^e_ij      w_ij = p_j psi_hat_ij - c_ij
-    s.t.  sum_j (x^c_ij + x^e_ij) <= A_i     for every supplier i       (1)
-          sum_i x^c_ij            <= C_j     for every requester j      (2c)
-          sum_i x^e_ij            <= X_j     for every requester j      (2e)
-          x >= 0
-
-eps is small enough that any core unit is worth more than any excess unit (C3),
-so excess only uses stock that no core need can use.
-
-Every variable appears in exactly one supply row and one demand row, so the
-constraint matrix is the incidence matrix of a bipartite graph: totally
-unimodular, and every vertex is integral when A_i, C_j and X_j are integers.
-"""
+# The per-round LP, built and solved with PuLP
 from __future__ import annotations
 
 import time
@@ -64,7 +47,6 @@ def _solver(name: str):
 
 
 def build_lp(P: RoundProblem):
-    """Returns the problem and the core / excess variables (None where the row is empty)."""
     lp = pulp.LpProblem("pulse_round", pulp.LpMaximize)
     A = P.A.astype(np.int64)
     Cj = P.C[P.e_req].astype(np.int64)
@@ -88,11 +70,11 @@ def build_lp(P: RoundProblem):
         xc.append(vc)
         xe.append(ve)
     lp.setObjective(pulp.LpAffineExpression(terms))
-    for i, vs in sup_rows.items():                                                   # (1)
+    for i, vs in sup_rows.items():
         lp.addConstraint(pulp.LpAffineExpression([(v, 1) for v in vs]) <= int(A[i]), f"sup{i}")
-    for j, vs in core_rows.items():                                                  # (2c)
+    for j, vs in core_rows.items():
         lp.addConstraint(pulp.LpAffineExpression([(v, 1) for v in vs]) <= int(P.C[j]), f"core{j}")
-    for j, vs in exc_rows.items():                                                   # (2e)
+    for j, vs in exc_rows.items():
         lp.addConstraint(pulp.LpAffineExpression([(v, 1) for v in vs]) <= int(P.X[j]), f"exc{j}")
     return lp, xc, xe
 
@@ -117,7 +99,7 @@ def solve_round(P: RoundProblem, solver: str = "cbc") -> Solution:
     if status != "Optimal" or np.isnan(c).any() or np.isnan(e).any():
         raise RuntimeError(f"round LP failed: {status}")
     frac = max(np.abs(c - np.round(c)).max(), np.abs(e - np.round(e)).max())
-    if frac > 1e-6:                                                                  # README 7.3
+    if frac > 1e-6:
         raise AssertionError(f"LP solution not integral (max fractional part {frac:.2e})")
     xc, xe = np.round(c).astype(np.int64), np.round(e).astype(np.int64)
     return Solution(xc=xc, xe=xe, status=status,

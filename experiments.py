@@ -1,16 +1,4 @@
-"""Experiment suites from README Section 12.
-
-    python experiments.py --suite ablation --seeds 5
-    python experiments.py --suite sweeps   --seeds 5 --jobs 4
-    python experiments.py --suite learning --seeds 5
-    python experiments.py --suite all      --seeds 20
-
-Every configuration in a suite is run on the same seeds, so differences come from
-the policy, not from different random instances. Outputs go to results/:
-    <suite>_runs.csv    one row per (configuration, seed): the run summary
-    <suite>_rounds.csv  one row per (configuration, seed, round)
-    <suite>_table.csv   mean and standard deviation per configuration
-"""
+# Multi-seed suites: python experiments.py --suite {ablation,sweeps,learning,all} --seeds N --jobs J
 from __future__ import annotations
 
 import argparse
@@ -41,12 +29,6 @@ def _districts(cfg: Config):
 
 # ---------------------------------------------------------------- suites
 def ablation_suite(base: Config, R_max: float) -> list[tuple[str, str, dict]]:
-    """Shield-Net (README 7.4), then one model feature added per step (README 13).
-
-    Every step runs in the SAME simulated world as full PULSE (carried stock,
-    abandonment, random match outcomes, refusals), so the steps differ only in
-    the platform's decisions.
-    """
     shieldnet = dict(use_psi_objective=False, learn_psi=False, W=(1.0, 2.0, 3.0),
                      alpha=1e-6 * R_max, beta=0.0, mu=0.0,
                      core_excess=False, price_filter=False, cert_filter=False)
@@ -157,7 +139,7 @@ def run_suite(name: str, configs, base: Config, seeds: list[int], jobs: int, out
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--suite", choices=["ablation", "sweeps", "learning", "all"], default="ablation")
     ap.add_argument("--seeds", type=int, default=5, help="number of seeds (1..N)")
     ap.add_argument("--jobs", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)),

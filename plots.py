@@ -1,12 +1,4 @@
-"""Figures from experiment results.
-
-    python plots.py                 # every suite found in results/
-    python plots.py --results results --out results/figures
-
-Reads results/<suite>_runs.csv and results/<suite>_rounds.csv written by
-experiments.py, and results/single/rounds.csv written by run.py.
-Error bars are one standard error of the mean across seeds.
-"""
+# Figures from results/: python plots.py
 from __future__ import annotations
 
 import argparse
@@ -15,9 +7,9 @@ import os
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 # categorical slots in fixed order (blue, orange, aqua); text stays in ink colours
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
@@ -159,7 +151,7 @@ def plot_single(rounds: pd.DataFrame, out: str) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", default="results")
     ap.add_argument("--out", default=None, help="default: <results>/figures")
     a = ap.parse_args()

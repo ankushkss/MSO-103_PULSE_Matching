@@ -1,4 +1,3 @@
-"""PULSE: Pop-Up Unified Logistics and Supplied Emergence."""
 from .config import Config, parse_overrides
 from .districts import Districts, load_districts
 from .generator import Instance, generate_instance

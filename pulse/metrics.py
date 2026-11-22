@@ -1,11 +1,4 @@
-"""Per-round records and run summaries (README Section 9).
-
-Fill rates in the run summary are measured on REALISED deliveries.
-`wfill_ref` weights requesters by fixed reference weights (1, 10, 100) for
-levels 1/2/3, whatever W the run used, so runs with different W stay comparable.
-Bulk requesters are reported separately because one bulk request can be the
-size of a whole round's supply and would swamp every other fill number.
-"""
+# Per-round records and run summaries
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,7 +12,6 @@ REF_W = np.array([1.0, 10.0, 100.0])
 
 
 class MatchLog:
-    """Every match made in a run (one row per x_ij > 0)."""
     FIELDS = ("tau", "sup", "req", "x", "delivered", "km", "same_state", "same_district",
               "price", "cert", "kappa", "level", "psi_true")
 
@@ -123,8 +115,6 @@ def run_summary(sim: "Simulation") -> dict:
     out["fill_L3_honest"] = _ratio(got[sel].sum(), D0[sel].sum())
     wts = REF_W[lvl - 1]
     out["wfill_ref"] = _ratio((wts * got)[nonbulk].sum(), (wts * D0)[nonbulk].sum())
-    # Need-based fill: deliveries counted only up to each facility's genuine need over the
-    # horizon (fixed world quantity, independent of the policy's H), all requesters incl. bulk.
     need = inst.r_usage * inst.r_size * cfg.need_days
     genuine = np.minimum(D0, need)
     met = np.minimum(got, genuine)
@@ -140,8 +130,6 @@ def run_summary(sim: "Simulation") -> dict:
     x, dv, km = m.get("x"), m.get("delivered"), m.get("km")
     ss, sdis = m.get("same_state").astype(bool), m.get("same_district").astype(bool)
     price, cert, kap = m.get("price"), m.get("cert").astype(bool), m.get("kappa")
-    # Expected deliveries under the TRUE success probabilities: the same policy value
-    # without the luck of the Bernoulli draws, so it varies much less across seeds.
     exp_units = m.get("psi_true") * x
     m_bulk = inst.r_bulk[m.get("req").astype(np.int64)] if len(x) else np.zeros(0, bool)
     out["expected_delivered"] = float(exp_units.sum())

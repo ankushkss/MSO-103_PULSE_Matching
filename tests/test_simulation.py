@@ -17,7 +17,6 @@ def test_conservation(small_cfg, districts):
 
 
 def test_core_excess_split(small_cfg, districts):
-    """Over-askers get excess; core = remaining genuine need; inflating gains no core."""
     cfg = small_cfg.with_(p_bulk=0.2)                  # many bulk requesters, all over-askers
     sim = Simulation(cfg, districts, seed=2)
     rounds, s = sim.run()
@@ -35,7 +34,6 @@ def test_core_off_treats_everything_as_core(small_cfg, districts):
 
 
 def test_inflating_a_request_gains_no_core(small_cfg, districts):
-    """Doubling one requester's request leaves its core demand unchanged."""
     from pulse.generator import generate_instance
     inst = generate_instance(small_cfg, districts, seed=5)
     j = int(np.argmax(inst.r_arrival == 1))
@@ -89,7 +87,6 @@ def test_reproducible(small_cfg, districts):
 
 
 def test_common_random_numbers_across_policies(small_cfg, districts):
-    """A match made under two different policies must turn out the same in both."""
     runs = []
     for cfg in (small_cfg, small_cfg.with_(H=7.0, W=(1.0, 2.0, 3.0), eta=0.0)):
         sim = Simulation(cfg, districts, seed=3)
@@ -103,7 +100,6 @@ def test_common_random_numbers_across_policies(small_cfg, districts):
 
 
 def test_refused_matches_never_deliver(small_cfg, districts):
-    """Without the model's filters, over-budget or uncertified-when-required matches fail."""
     cfg = small_cfg.with_(price_filter=False, cert_filter=False)
     sim = Simulation(cfg, districts, seed=1)
     rounds, _ = sim.run()

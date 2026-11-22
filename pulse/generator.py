@@ -1,8 +1,4 @@
-"""Synthetic suppliers and requesters (README Section 11).
-
-The instance depends only on (config generator fields, districts, seed), never on
-policy parameters, so every policy is compared on the same instance.
-"""
+# Synthetic suppliers and requesters
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +14,6 @@ BOTH = ASSEMBLED | KIT
 
 
 def make_streams(seed: int) -> dict:
-    """Independent RNG streams so that a policy change does not shift other draws."""
     names = ("suppliers", "requesters", "outcomes", "abandonment", "verification")
     children = np.random.SeedSequence(seed).spawn(len(names))
     return {n: np.random.default_rng(c) for n, c in zip(names, children)}
@@ -65,7 +60,7 @@ def generate_instance(cfg: Config, districts: Districts, seed: int,
     streams = streams or make_streams(seed)
     K = districts.K
 
-    # ---------------- suppliers ----------------
+    # suppliers
     rs = streams["suppliers"]
     N = max(1, int(round(cfg.n_suppliers * cfg.supply_scale)))
     n_rounds = cfg.n_rounds
@@ -82,7 +77,7 @@ def generate_instance(cfg: Config, districts: Districts, seed: int,
 
     A_bar1 = cfg.frac_enrol_round1 * N * cfg.gaps[0] * expected_daily_rate(cfg)
 
-    # ---------------- requesters ----------------
+    # requesters
     rr = streams["requesters"]
     counts = [rr.poisson(cfg.arrivals_1 * cfg.arrivals_decay ** t) for t in range(n_rounds)]
     M = int(sum(counts))

@@ -1,4 +1,4 @@
-"""The six-round PULSE simulation (README Sections 4, 5, 8 and 10)."""
+# Multi-round simulation: builds each round's LP, realises outcomes, carries state forward
 from __future__ import annotations
 
 import logging
@@ -27,10 +27,6 @@ class Simulation:
         self.seed = seed
         streams = make_streams(seed)
         self.inst = instance if instance is not None else generate_instance(cfg, districts, seed, streams)
-        # Common random numbers: one pre-drawn uniform per (round, supplier, requester)
-        # for match outcomes, and per (round, requester) for abandonment.
-        # A given match or exit then turns out the same under every
-        # policy, so paired comparisons differ only because the decisions differ.
         T = cfg.n_rounds
         nS, nR = self.inst.n_suppliers, self.inst.n_requesters
         self.U_out = streams["outcomes"].random((T, nS, nR), dtype=np.float32)
@@ -51,7 +47,6 @@ class Simulation:
         self.matches = MatchLog()
         self.rounds: list[dict] = []
 
-    # ------------------------------------------------------------------
     def psi_hat(self) -> np.ndarray:
         cfg = self.cfg
         if not cfg.use_psi_objective:
@@ -63,11 +58,9 @@ class Simulation:
         return np.maximum(cfg.psi_floor, post)
 
     def c2_holds(self, psi: np.ndarray) -> bool:
-        """Urgency dominance across every pair of adjacent levels (README 7.2)."""
         cmax = self.cfg.tie_break_max
         return all(self.W[l + 1] * psi[CROSS] - cmax > self.W[l] * psi[SAME] for l in range(2))
 
-    # ------------------------------------------------------------------
     def run(self) -> tuple[list[dict], dict]:
         for tau in range(1, self.cfg.n_rounds + 1):
             self.rounds.append(self._round(tau))
@@ -78,7 +71,7 @@ class Simulation:
         cfg, inst, d = self.cfg, self.inst, self.d
         gap = cfg.gaps[tau - 1]
 
-        # 1-2. enrolment and supply
+        # enrolment and supply
         sup = np.nonzero(inst.s_enrol <= tau)[0]
         A = inst.s_rate[sup] * gap + self.r[sup]
         A_tot = int(A.sum())
@@ -88,11 +81,11 @@ class Simulation:
         self.status[new] = ACTIVE
         self.carry[new] = inst.r_D0[new]
 
-        # 3. outstanding demand
+        # outstanding demand
         req = np.nonzero(self.status == ACTIVE)[0]
         D = self.carry[req].copy()
 
-        # 4. split into core (genuine need not yet received) and excess (the rest)
+        # split into core (genuine need not yet received) and excess (the rest)
         if cfg.core_excess:
             room = np.maximum(0, np.floor(self.need[req] - self.delivered[req] + 1e-9)).astype(np.int64)
             C = np.minimum(D, room)
@@ -104,11 +97,9 @@ class Simulation:
         psi = self.psi_hat()
         c2_ok = self.c2_holds(psi)
         if not c2_ok:
-            # Expected whenever W is not lexicographic-like, e.g. W = (1, 2, 3).
-            # Recorded per round as `c2_ok` and per run as `c2_failures`.
             log.debug("round %d: (C2) fails with psi_hat = %s", tau, np.round(psi, 3))
 
-        # 6. eligibility (vectorised over suppliers x requesters)
+        # eligibility (vectorised over suppliers x requesters)
         sd, rd = inst.s_dist[sup], inst.r_dist[req]
         compat = (inst.s_var[sup][:, None] & inst.r_var[req][None, :]) != 0
         ones = np.ones((len(sup), len(req)), dtype=bool)
@@ -135,7 +126,7 @@ class Simulation:
 
         ei, ej = np.nonzero(elig)
 
-        # 7. coefficients and bounds
+        # coefficients and bounds
         Rk = Rsub[ei, ej]
         chat = Rk / d.R_max
         rho = inst.s_price[sup][ei] / inst.r_pmax[req][ej]
@@ -152,22 +143,19 @@ class Simulation:
         sol = solve_round(P, solver=cfg.solver)
         x = sol.x
 
-        # 8.1 realise matches (outcomes from the TRUE psi, never psi_hat)
+        # realise matches (outcomes from the TRUE psi, never psi_hat)
         matched = x > 0
         B = np.ones(len(x), dtype=bool)
         if cfg.simulate_failures and matched.any():
             psi_true = np.asarray(cfg.psi_true)
             draws = self.U_out[tau - 1, sup[ei[matched]], req[ej[matched]]]
             B[matched] = draws < psi_true[cls[matched]]
-        # A requester refuses stock above its budget, or uncertified stock when it
-        # requires certification. This is part of the world, so it applies even when
-        # the model's own filters are switched off (e.g. the Shield-Net baseline).
         refused = matched & ((inst.s_price[sup][ei] > inst.r_pmax[req][ej])
                              | ((inst.r_kappa[req][ej] == 2) & ~inst.s_cert[sup][ei]))
         B[refused] = False
         deliv = np.where(B, x, 0)
 
-        # 8.2 learn (counts matches, not units)
+        # learn (counts matches, not units)
         if cfg.learn_psi and cfg.simulate_failures:
             for g in (SAME, CROSS):
                 sel = matched & (cls == g)
@@ -185,7 +173,7 @@ class Simulation:
         if cfg.check_invariants:
             self._check(tau, A, C, X, ei, ej, sol.xe, sup_alloc, core_alloc, exc_alloc)
 
-        # 8.3 suppliers: leakage and storage cap
+        # suppliers: leakage and storage cap
         unsold = A - sup_deliv
         kept = np.floor(cfg.eta * unsold + 1e-9).astype(np.int64)
         r_new = np.minimum(kept, np.floor(cfg.h * inst.s_rate[sup]).astype(np.int64))
@@ -193,13 +181,13 @@ class Simulation:
         leaked = int((unsold - kept).sum())
         lost_storage = int((kept - r_new).sum())
 
-        # 8.4 requesters
+        # requesters
         self.carry[req] = D - req_deliv
         self.delivered[req] += req_deliv
         served = self.carry[req] == 0
         self.status[req[served]] = SERVED
 
-        # 8.5 abandonment
+        # abandonment
         act = req[~served]
         leave = self.U_ab[tau - 1, act] < cfg.omega
         gone = act[leave]
@@ -224,19 +212,17 @@ class Simulation:
             units_abandoned=int(self.abandoned_units[gone].sum()),
             same=same, Rk=Rk, cls=cls)
 
-    # ------------------------------------------------------------------
     def _check(self, tau, A, C, X, ei, ej, xe, sup_alloc, core_alloc, exc_alloc):
-        """README Section 7 properties, asserted every round."""
         assert (sup_alloc <= A).all(), f"round {tau}: supplier allocated beyond stock"
         assert (core_alloc <= C).all(), f"round {tau}: core allocated beyond core demand"
         assert (exc_alloc <= X).all(), f"round {tau}: excess allocated beyond excess demand"
         if len(ei):
             core_open = (C - core_alloc)[ej] > 0
             open_ = core_open | ((X - exc_alloc)[ej] > 0)
-            # 7.1: no edge left idle with stock on one side and demand on the other
+            # no edge left idle with stock on one side and demand on the other
             bad = ((A - sup_alloc)[ei] > 0) & open_
             assert not bad.any(), f"round {tau}: an edge with stock and demand left idle"
-            # 7.4: a supplier ships excess only if none of its requesters has core left
+            # a supplier ships excess only if none of its requesters has core left
             ships_excess = np.bincount(ei, weights=xe, minlength=len(A)) > 0
             bad = ships_excess[ei] & core_open
             assert not bad.any(), f"round {tau}: excess served while reachable core was unmet"

@@ -1,10 +1,4 @@
-"""District data loader (README Section 2.1).
-
-Reads the workbook, validates it, reorders the matrix to the `districts` sheet,
-fills the diagonal with U[10,20] km where it is 0 or blank, and marks blank
-off-diagonal cells as unreachable (inf). The parsed raw matrix is cached as
-`<workbook>.cache.npz` and reused while the workbook is unchanged.
-"""
+# Loads and validates the district workbook
 from __future__ import annotations
 
 import logging
@@ -31,7 +25,7 @@ class Districts:
     state: np.ndarray          # int state code per district
     state_names: np.ndarray    # str, indexed by state code
     population: Optional[np.ndarray]
-    R: np.ndarray              # float km, inf = unreachable, R[k,l] supplier k -> requester l
+    R: np.ndarray
     R_max: float               # largest finite entry
     n_blank: int               # blank off-diagonal cells
     n_asym: int                # pairs with R[k,l] != R[l,k]
@@ -52,7 +46,7 @@ def _read_raw(path: str):
         xls = pd.ExcelFile(path, engine="openpyxl")
     except FileNotFoundError:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         raise DistrictDataError(f"cannot open {path}: {e}") from e
     for sheet in ("districts", "distances"):
         if sheet not in xls.sheet_names:
@@ -130,7 +124,7 @@ def _load_raw_cached(path: str, use_cache: bool):
             if np.array_equal(z["key"], key):
                 pop = z["population"] if z["has_pop"] else None
                 return z["ids"], z["names"], z["states"], pop, z["raw"]
-        except Exception:  # noqa: BLE001  (corrupt cache: just rebuild)
+        except Exception:
             pass
     log.info("reading %s (first load can take a while for an 800 x 800 sheet)", path)
     ids, names, states, pop, raw = _read_raw(path)

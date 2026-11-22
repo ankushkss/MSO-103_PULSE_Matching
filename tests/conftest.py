@@ -6,8 +6,8 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from pulse import Config, load_districts  # noqa: E402
-from pulse.make_districts import make_placeholder  # noqa: E402
+from pulse import Config, load_districts
+from pulse.make_districts import make_placeholder
 
 
 @pytest.fixture(scope="session")
