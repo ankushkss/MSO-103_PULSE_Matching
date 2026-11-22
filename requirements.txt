@@ -1,0 +1,10 @@
+# PuLP 3.3.2 is pinned: it bundles CBC and matches the modelling API used in pulse/model.py (README §15)
+pulp==3.3.2
+numpy>=1.26
+pandas>=2.1
+scipy>=1.11
+openpyxl>=3.1
+matplotlib>=3.8
+pytest>=8.0
+# optional: --set solver=highs
+# highspy>=1.7

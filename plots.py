@@ -1,0 +1,324 @@
+"""Figures from experiment results.
+
+    python plots.py                 # every suite found in results/
+    python plots.py --results results --out results/figures
+
+Reads results/<suite>_runs.csv and results/<suite>_rounds.csv written by
+experiments.py, and results/single/rounds.csv written by run.py.
+Error bars on level plots are one standard error of the mean across seeds.
+Forest plots use results/<suite>_paired.csv: paired per-seed differences with 95% t-CIs.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+# categorical slots in fixed order (blue, orange, aqua); text stays in ink colours
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
+INK, INK_2, GRID = "#1f1f1e", "#5f5e5a", "#e4e3df"
+
+plt.rcParams.update({
+    "font.size": 9, "axes.edgecolor": GRID, "axes.labelcolor": INK_2, "xtick.color": INK_2,
+    "ytick.color": INK_2, "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
+    "axes.axisbelow": True, "axes.spines.top": False, "axes.spines.right": False,
+    "legend.frameon": False, "figure.dpi": 150, "savefig.bbox": "tight",
+})
+
+
+def _sem(s):
+    return s.std(ddof=1) / np.sqrt(max(1, s.count())) if s.count() > 1 else 0.0
+
+
+def _agg(df, by, metrics):
+    g = df.groupby(by, sort=False)
+    return g[metrics].mean(), g[metrics].agg(_sem)
+
+
+def plot_ablation(runs: pd.DataFrame, out: str) -> str:
+    metrics = [("wneed_fill_ref", "urgency-weighted need met"), ("need_fill", "need met"),
+               ("fill_L3_honest", "level-3 fill (honest requests)")]
+    mean, err = _agg(runs, "config", [m for m, _ in metrics])
+    labels = list(mean.index)
+    y = np.arange(len(labels))
+    h = 0.26
+    fig, ax = plt.subplots(figsize=(7.5, 0.45 * len(labels) + 1.2))
+    for k, (m, name) in enumerate(metrics):
+        ax.barh(y + (k - 1) * h, mean[m], height=h - 0.03, xerr=err[m], color=SERIES[k],
+                label=name, error_kw=dict(ecolor=INK_2, lw=0.8, capsize=2))
+    ax.set_yticks(y, labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("share of requested units")
+    ax.set_xlim(0, 1)
+    ax.set_title("Ablation: Shield-Net to PULSE, one feature at a time", loc="left", color=INK, pad=26)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, borderaxespad=0.2)
+    path = os.path.join(out, "ablation.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+FOREST_METRICS = [("need_fill", "need met"), ("wneed_fill_ref", "weighted need met (1,10,100)"),
+                  ("wneed_fill_w123", "weighted need met (1,2,3)"),
+                  ("exp_fill_nonbulk", "expected fill")]
+
+
+def plot_forest(paired: pd.DataFrame, comparison: str, title: str, out: str, fname: str) -> str | None:
+    """Paired difference vs reference with 95% CI; one row per config, one colour per metric."""
+    sub = paired[paired["comparison"] == comparison]
+    if sub.empty:
+        return None
+    configs = list(dict.fromkeys(sub["config"]))
+    metrics = [(m, n) for m, n in FOREST_METRICS if m in set(sub["metric"])]
+    colours = SERIES + ["#8a5cd1"]
+    y = np.arange(len(configs))
+    h = 0.8 / max(1, len(metrics))
+    fig, ax = plt.subplots(figsize=(7.5, 0.55 * len(configs) + 1.4))
+    for k, (m, name) in enumerate(metrics):
+        r = sub[sub["metric"] == m].set_index("config").reindex(configs)
+        yy = y + (k - (len(metrics) - 1) / 2) * h
+        ax.errorbar(r["mean_diff"], yy, xerr=[r["mean_diff"] - r["ci_low"], r["ci_high"] - r["mean_diff"]],
+                    fmt="o", ms=4, color=colours[k], capsize=2, lw=1.2, label=name)
+    ax.axvline(0, color=INK_2, lw=0.8)
+    ax.set_yticks(y, configs)
+    ax.invert_yaxis()
+    ref = sub["reference"].iloc[0] if sub["reference"].nunique() == 1 else "reference"
+    ax.set_xlabel(f"paired difference vs {ref} (95% CI over seeds)")
+    ax.set_title(title, loc="left", color=INK, pad=40)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, borderaxespad=0.2)
+    path = os.path.join(out, fname)
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_ablation_seeds(runs: pd.DataFrame, out: str, metric: str = "need_fill") -> str:
+    """Each seed as a line across ablation steps: shows whether a gain holds on every seed."""
+    order = list(dict.fromkeys(runs["config"]))
+    wide = runs.pivot(index="seed", columns="config", values=metric)[order]
+    x = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(7.5, 3.4))
+    for _, row in wide.iterrows():
+        ax.plot(x, row.values, color=SERIES[0], alpha=0.25, lw=1)
+    ax.plot(x, wide.mean().values, color=SERIES[1], lw=2.2, marker="o", ms=5, label="mean")
+    ax.set_xticks(x, [c.split(" ", 1)[0] for c in order])
+    ax.set_xlabel("ablation step (see ablation_table.csv for labels)")
+    ax.set_ylabel(metric)
+    ax.set_title(f"Ablation per seed: {metric}", loc="left", color=INK)
+    ax.legend(loc="lower right")
+    path = os.path.join(out, f"ablation_seeds_{metric}.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_ci_convergence(runs: pd.DataFrame, config: str, reference: str, out: str,
+                        metrics=("need_fill", "wneed_fill_ref", "exp_fill_nonbulk")) -> str | None:
+    """95% CI half-width of the paired difference vs number of seeds (justifies the seed count)."""
+    from scipy import stats as sps
+    a = runs[runs["config"] == config].set_index("seed")
+    b = runs[runs["config"] == reference].set_index("seed")
+    seeds = sorted(a.index.intersection(b.index))
+    if len(seeds) < 3:
+        return None
+    fig, ax = plt.subplots(figsize=(6, 3.2))
+    ns = np.arange(3, len(seeds) + 1)
+    for k, m in enumerate(metrics):
+        if m not in a.columns:
+            continue
+        d = (a.loc[seeds, m] - b.loc[seeds, m]).to_numpy(dtype=float)
+        hw = [sps.t.ppf(0.975, n - 1) * d[:n].std(ddof=1) / np.sqrt(n) for n in ns]
+        ax.plot(ns, hw, color=SERIES[k % len(SERIES)], lw=2, marker="o", ms=3, label=m)
+    ax.set_xlabel("number of seeds")
+    ax.set_ylabel("95% CI half-width")
+    ax.set_title(f"CI width: {config} vs {reference}", loc="left", color=INK)
+    ax.legend(loc="upper right")
+    path = os.path.join(out, "ci_convergence.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_bound_gap(gap: pd.DataFrame, out: str, metric: str = "need_fill") -> str | None:
+    """Share of the clairvoyant fluid bound (H1) each policy achieves."""
+    col = f"{metric}_pct_of_H1"
+    if col not in gap.columns:
+        return None
+    g = gap[~gap["config"].str.startswith("H")]
+    y = np.arange(len(g))
+    fig, ax = plt.subplots(figsize=(7, 0.5 * len(g) + 1.2))
+    ax.barh(y, g[col] * 100, color=[SERIES[1] if c == "PULSE" else SERIES[0] for c in g["config"]],
+            height=0.6)
+    for yy, v in zip(y, g[col] * 100):
+        ax.text(v + 0.8, yy, f"{v:.1f}%", va="center", color=INK, fontsize=8)
+    ax.set_yticks(y, g["config"])
+    ax.invert_yaxis()
+    ax.set_xlim(0, 110)
+    ax.axvline(100, color=INK_2, lw=0.8, ls="--")
+    ax.set_xlabel(f"{metric}: % of the clairvoyant bound (knows all future arrivals)")
+    ax.set_title("How close each policy gets to the best achievable", loc="left", color=INK)
+    path = os.path.join(out, f"bound_gap_{metric}.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_sweeps(runs: pd.DataFrame, out: str) -> str:
+    groups = list(dict.fromkeys(runs["group"]))
+    n = len(groups)
+    cols = 4
+    rows = int(np.ceil(n / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(3.0 * cols, 2.4 * rows), squeeze=False)
+    for ax, g in zip(axes.flat, groups):
+        sub = runs[runs["group"] == g]
+        mean, err = _agg(sub, "config", ["wneed_fill_ref", "need_fill"])
+        labels = [c.split("=", 1)[1] for c in mean.index]
+        x = np.arange(len(labels))
+        for k, (m, name) in enumerate([("wneed_fill_ref", "urgency-weighted need met"),
+                                       ("need_fill", "need met")]):
+            ax.errorbar(x, mean[m], yerr=err[m], color=SERIES[k], lw=2, marker="o", ms=5,
+                        capsize=2, label=name)
+        ax.set_xticks(x, labels)
+        ax.set_title(g, loc="left", color=INK)
+        ax.set_ylim(0, 1)
+    for ax in list(axes.flat)[n:]:
+        ax.axis("off")
+    axes.flat[0].legend(loc="lower left")
+    fig.suptitle("Sensitivity sweeps (base: PULSE defaults)", x=0.01, ha="left", color=INK)
+    fig.tight_layout()
+    path = os.path.join(out, "sweeps.png")
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
+def plot_learning(runs: pd.DataFrame, rounds: pd.DataFrame, out: str) -> list[str]:
+    paths = []
+    runs = runs.copy()
+    runs["learn"] = runs["config"].str.endswith("learn=on")
+    mean, err = _agg(runs, ["group", "learn"], ["exp_fill_nonbulk"])
+    groups = list(dict.fromkeys(runs["group"]))
+    x = np.arange(len(groups))
+    fig, ax = plt.subplots(figsize=(8, 3.2))
+    for k, learn in enumerate([False, True]):
+        m = [mean.loc[(g, learn), "exp_fill_nonbulk"] for g in groups]
+        e = [err.loc[(g, learn), "exp_fill_nonbulk"] for g in groups]
+        ax.bar(x + (k - 0.5) * 0.38, m, width=0.36, yerr=e, color=SERIES[k],
+               label="learning on" if learn else "learning off (prior only)",
+               error_kw=dict(ecolor=INK_2, lw=0.8, capsize=2))
+    ax.set_xticks(x, [g.replace("true=", "") for g in groups], rotation=30, ha="right")
+    ax.set_xlabel("true (ψ same, ψ cross); prior is (0.40, 0.16)")
+    ax.set_ylabel("expected fill")
+    ax.set_title("Value of learning ψ", loc="left", color=INK)
+    ax.legend(loc="upper left")
+    p = os.path.join(out, "learning_value.png")
+    fig.savefig(p)
+    plt.close(fig)
+    paths.append(p)
+
+    on = rounds[rounds["config"].str.endswith("learn=on")]
+    fig, axes = plt.subplots(1, 2, figsize=(8, 3), sharex=True)
+    for ax, col, name in ((axes[0], "psi_hat_same", r"$\hat\psi$ same state"),
+                          (axes[1], "psi_hat_cross", r"$\hat\psi$ cross state")):
+        for g in groups:
+            sub = on[on["group"] == g].groupby("round")[col].mean()
+            ax.plot(sub.index, sub.values, color=SERIES[0], alpha=0.35, lw=1.2)
+        ax.set_title(name, loc="left", color=INK)
+        ax.set_xlabel("round")
+    axes[0].set_ylabel("belief at start of round")
+    fig.suptitle("How beliefs move from the prior (one line per true ψ)", x=0.01, ha="left", color=INK)
+    fig.tight_layout()
+    p = os.path.join(out, "learning_trajectories.png")
+    fig.savefig(p)
+    plt.close(fig)
+    paths.append(p)
+    return paths
+
+
+def plot_single(rounds: pd.DataFrame, out: str) -> str:
+    fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+    x = rounds["round"]
+    ax = axes[0]
+    for k, (col, name) in enumerate([("A_tot", "available supply"), ("D_tot", "outstanding demand")]):
+        ax.plot(x, rounds[col] / 1000, color=SERIES[k], lw=2, marker="o", ms=5, label=name)
+    ax.set_ylabel("thousand units")
+    ax.set_xlabel("round")
+    ax.set_title("Supply and demand", loc="left", color=INK)
+    ax.legend(loc="upper left")
+    ax = axes[1]
+    for k, (col, name) in enumerate([("allocated", "allocated"), ("delivered", "delivered")]):
+        ax.plot(x, rounds[col] / 1000, color=SERIES[k], lw=2, marker="o", ms=5, label=name)
+    ax.set_xlabel("round")
+    ax.set_title("Allocated vs delivered", loc="left", color=INK)
+    ax.legend(loc="upper left")
+    fig.tight_layout()
+    p = os.path.join(out, "single_run.png")
+    fig.savefig(p)
+    plt.close(fig)
+    return p
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--results", default="results")
+    ap.add_argument("--out", default=None, help="default: <results>/figures")
+    a = ap.parse_args()
+    out = a.out or os.path.join(a.results, "figures")
+    os.makedirs(out, exist_ok=True)
+    made = []
+
+    def load(name):
+        p = os.path.join(a.results, f"{name}_runs.csv")
+        q = os.path.join(a.results, f"{name}_rounds.csv")
+        if os.path.exists(p):
+            return pd.read_csv(p), (pd.read_csv(q) if os.path.exists(q) else None)
+        return None, None
+
+    runs, _ = load("ablation")
+    if runs is not None:
+        made.append(plot_ablation(runs, out))
+        made.append(plot_ablation_seeds(runs, out))
+        order = list(dict.fromkeys(runs["config"]))
+        made.append(plot_ci_convergence(runs, order[-1], order[0], out))
+    for suite, comp, title, fname in [
+            ("ablation", "vs_shieldnet", "Gain over Shield-Net (paired)", "forest_vs_shieldnet.png"),
+            ("ablation", "vs_fair_shieldnet", "Gain over Shield-Net + filters (paired)",
+             "forest_vs_fair_shieldnet.png"),
+            ("ablation", "vs_previous_step", "Marginal gain of each ablation step (paired)",
+             "forest_marginal.png"),
+            ("sweeps", "vs_default", "Sweeps: change vs default value (paired)", "forest_sweeps.png"),
+            ("learning", "learn_on_vs_off", "Value of learning ψ (paired, on - off)",
+             "forest_learning.png"),
+            ("benchmarks", "vs_pulse", "Benchmarks: difference from PULSE (paired)",
+             "forest_benchmarks.png")]:
+        pp = os.path.join(a.results, f"{suite}_paired.csv")
+        if os.path.exists(pp):
+            made.append(plot_forest(pd.read_csv(pp), comp, title, out, fname))
+    runs, _ = load("sweeps")
+    if runs is not None:
+        made.append(plot_sweeps(runs, out))
+    runs, rounds = load("learning")
+    if runs is not None and rounds is not None:
+        made.extend(plot_learning(runs, rounds, out))
+    gp = os.path.join(a.results, "benchmarks_gap.csv")
+    if os.path.exists(gp):
+        made.append(plot_bound_gap(pd.read_csv(gp), out))
+    single = os.path.join(a.results, "single", "rounds.csv")
+    if os.path.exists(single):
+        made.append(plot_single(pd.read_csv(single), out))
+    made = [p for p in made if p]
+    if not made:
+        print(f"no results found in {a.results}/ (run run.py or experiments.py first)")
+    for p in made:
+        if p:
+            print("wrote", p)
+
+
+if __name__ == "__main__":
+    main()
